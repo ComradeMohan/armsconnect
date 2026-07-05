@@ -10,8 +10,21 @@ export default function DemoPage() {
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
+
+  // Lock body scroll when modals are open
+  useEffect(() => {
+    if (showNotificationsModal || showProfileModal) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [showNotificationsModal, showProfileModal]);
 
   // Demo Student Data
   const demoProfile = {
@@ -180,6 +193,39 @@ export default function DemoPage() {
         ))}
       </>
     );
+  };
+
+  const sortedCourses = [...(demoProfile?.courses || [])];
+  if (sortConfig !== null) {
+    sortedCourses.sort((a, b) => {
+      let aVal = a[sortConfig.key];
+      let bVal = b[sortConfig.key];
+
+      if (sortConfig.key === 'grade') {
+        const gradeOrder: any = { 'S': 6, 'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 1 };
+        aVal = gradeOrder[a.grade?.toUpperCase()] || 0;
+        bVal = gradeOrder[b.grade?.toUpperCase()] || 0;
+      } else {
+        if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+        if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+      }
+
+      if (aVal < bVal) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
+      }
+      if (aVal > bVal) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  }
+
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
   };
 
   return (
@@ -514,14 +560,26 @@ export default function DemoPage() {
                   <table>
                     <thead>
                       <tr>
-                        <th>Code</th>
-                        <th>Course</th>
-                        <th>Grade</th>
+                        <th onClick={() => handleSort('code')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                          Code <span style={{ marginLeft: "4px" }}>
+                            {sortConfig?.key === 'code' ? (sortConfig.direction === 'asc' ? <i className="fas fa-sort-up"></i> : <i className="fas fa-sort-down"></i>) : <i className="fas fa-sort" style={{ opacity: 0.3 }}></i>}
+                          </span>
+                        </th>
+                        <th onClick={() => handleSort('course')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                          Course <span style={{ marginLeft: "4px" }}>
+                            {sortConfig?.key === 'course' ? (sortConfig.direction === 'asc' ? <i className="fas fa-sort-up"></i> : <i className="fas fa-sort-down"></i>) : <i className="fas fa-sort" style={{ opacity: 0.3 }}></i>}
+                          </span>
+                        </th>
+                        <th onClick={() => handleSort('grade')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                          Grade <span style={{ marginLeft: "4px" }}>
+                            {sortConfig?.key === 'grade' ? (sortConfig.direction === 'asc' ? <i className="fas fa-sort-up"></i> : <i className="fas fa-sort-down"></i>) : <i className="fas fa-sort" style={{ opacity: 0.3 }}></i>}
+                          </span>
+                        </th>
                         <th>Session</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {demoProfile.courses.map((course: any) => {
+                      {sortedCourses.map((course: any, idx: number) => {
                         const uppercaseGrade = course.grade?.toUpperCase();
                         let badgeBg = "rgba(255, 255, 255, 0.1)";
                         let badgeShadow = "none";
@@ -688,13 +746,13 @@ export default function DemoPage() {
            to escape any parent overflow:hidden / transform stacking context */}
       {mounted && showNotificationsModal && createPortal(
         <div className="notif-modal-overlay" onClick={() => setShowNotificationsModal(false)}>
-          <div className="notif-modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="notif-modal-content" onClick={(e) => e.stopPropagation()} style={{ animation: "slideUpModal 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
             <div className="notif-modal-header">
               <h3>Recent Notifications</h3>
               <button className="close-modal-btn" onClick={() => setShowNotificationsModal(false)}>×</button>
             </div>
-            <div className="notif-modal-body">
-              {demoProfile.notifications.map((note: any, idx: number) => (
+            <div className="notif-modal-body" style={{ overflowY: "auto", maxHeight: "65vh", overscrollBehavior: "contain", paddingBottom: "20px" }}>
+              {demoProfile.notifications && demoProfile.notifications.map((note: any, idx: number) => (
                 <div key={idx} className="notif-modal-item">
                   <div className="notif-modal-item-header">
                     <span className="notif-modal-by">{note.by}</span>
@@ -724,7 +782,8 @@ export default function DemoPage() {
               maxWidth: "480px",
               maxHeight: "85vh",
               overflowY: "auto",
-              padding: "0 0 30px 0",
+              overscrollBehavior: "contain",
+              transform: "translateY(0)",
               animation: "slideUpModal 0.3s cubic-bezier(0.16,1,0.3,1)"
             }}
           >
