@@ -137,7 +137,9 @@ export async function POST(request: Request) {
           const status = (row.FinalResult || '').trim().toUpperCase();
           if (status === 'FAIL') continue;
 
-          if (gradePoints[grade] !== undefined) {
+          const courseCode = (row.CourseCode || '').trim();
+          
+          if (gradePoints[grade] !== undefined && courseCode.toUpperCase() !== 'SPIC1') {
             totalPoints += gradePoints[grade];
             totalCredits += 1;
           }
@@ -158,7 +160,7 @@ export async function POST(request: Request) {
     profileData.cgpa = totalCredits > 0 ? Number((totalPoints / totalCredits).toFixed(2)) : 'N/A';
 
     // Step 6: Fetch Attendance
-    const attendanceUrl = 'https://arms.sse.saveetha.com/Handler/Student.ashx?Page=StudentAttendance&Mode=ATTENDANCEPGMPERSENT';
+    const attendanceUrl = 'https://arms.sse.saveetha.com/Handler/Administration.ashx?Page=StudentAttendance&Mode=ATTENDANCEPGMPERSENT&Id=0&Sid=0&Date=&ToDate=';
     console.log(`[NextAPI] Requesting GET: ${attendanceUrl}`);
     const attnRes = await client.get(attendanceUrl);
     console.log(`[NextAPI] GET Response Status: ${attnRes.status}`);

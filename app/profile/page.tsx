@@ -56,7 +56,7 @@ export default function ProfilePage() {
     if (profile?.courses) {
       profile.courses.forEach((c: any) => {
         const grade = c.grade?.toUpperCase();
-        if (counts[grade] !== undefined) {
+        if (counts[grade] !== undefined && c.code?.toUpperCase() !== 'SPIC1') {
           counts[grade]++;
         }
       });
@@ -549,7 +549,14 @@ export default function ProfilePage() {
                         return (
                           <tr key={course.sno}>
                             <td style={{ color: "var(--text-dim)", fontSize: "12px", textTransform: "uppercase" }}>{course.code}</td>
-                            <td style={{ fontWeight: 600, color: "white" }}>{course.name}</td>
+                            <td style={{ fontWeight: 600, color: "white" }}>
+                              {course.name}
+                              {course.code?.toUpperCase() === "SPIC1" && (
+                                <span style={{ marginLeft: "10px", background: "linear-gradient(135deg, #f59e0b, #d97706)", padding: "3px 8px", borderRadius: "12px", fontSize: "10px", color: "#ffffff", fontWeight: "bold", boxShadow: "0 0 12px rgba(245, 158, 11, 0.4)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                                  Not Graded
+                                </span>
+                              )}
+                            </td>
                             <td>
                               <div style={{
                                 display: "flex",
@@ -576,7 +583,7 @@ export default function ProfilePage() {
                 </div>
 
                 {/* Right Column: Unified Circular Doughnut Analytics of Grades */}
-                <div className="grade-chart-container" style={{ borderLeft: "1px solid var(--border-glass)", paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "15px", justifyContent: "center" }}>
+                <div className="grade-chart-container" style={{ borderLeft: "1px solid var(--border-glass)", paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "15px", justifyContent: "flex-start" }}>
                   <div style={{
                     background: "rgba(0, 0, 0, 0.15)",
                     border: "1px solid rgba(255, 255, 255, 0.03)",
