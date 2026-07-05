@@ -148,8 +148,8 @@ export default function ProfilePage() {
   const sortedCourses = [...(profile?.courses || [])];
   if (sortConfig !== null) {
     sortedCourses.sort((a, b) => {
-      let aVal = a[sortConfig.key];
-      let bVal = b[sortConfig.key];
+      let aVal = (a as any)[sortConfig.key];
+      let bVal = (b as any)[sortConfig.key];
 
       if (sortConfig.key === 'grade') {
         const gradeOrder: any = { 'S': 6, 'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 1 };
