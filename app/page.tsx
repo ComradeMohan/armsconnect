@@ -79,11 +79,15 @@ export default function LoginPage() {
         sessionStorage.setItem("profile", JSON.stringify(data));
         if (keepMeLoggedIn) {
           localStorage.setItem("profile", JSON.stringify(data));
+          localStorage.setItem("saved_username", username);
+          localStorage.setItem("saved_password", password);
         } else {
           localStorage.removeItem("profile");
+          localStorage.removeItem("saved_username");
+          localStorage.removeItem("saved_password");
         }
         setTimeout(() => {
-          router.push("/profile");
+          window.location.href = "/profile";
         }, 500);
       } else {
         setIsLoading(false);
@@ -126,7 +130,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} id="loginForm">
+            <div id="loginForm">
               <div className="input-group">
                 <label htmlFor="username">Registration Number</label>
                 <div className="input-wrapper">
@@ -187,7 +191,7 @@ export default function LoginPage() {
                 </label>
               </div>
 
-              <button type="submit" className="sign-in-btn" style={{
+              <button type="button" onClick={handleSubmit} className="sign-in-btn" style={{
                 background: "linear-gradient(135deg, #FF4081, #FF80AB)",
                 border: "none",
                 borderRadius: "16px",
@@ -210,7 +214,7 @@ export default function LoginPage() {
               >
                 Sign In to ARMSConnect <i className="fas fa-arrow-right"></i>
               </button>
-            </form>
+            </div>
           </div>
         </div>
       </div>

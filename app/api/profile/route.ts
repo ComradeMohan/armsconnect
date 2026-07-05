@@ -4,6 +4,8 @@ import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import * as cheerio from 'cheerio';
 
+const ARMS_BASE_URL = (process.env.ARMS_BASE_URL || 'https://arms.sse.saveetha.com').replace(/\/+$/, '');
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -28,7 +30,7 @@ export async function POST(request: Request) {
     }));
 
     // Step 1: GET Login.aspx state variables
-    const loginUrl = 'https://arms.sse.saveetha.com/Login.aspx';
+    const loginUrl = `${ARMS_BASE_URL}/Login.aspx`;
     console.log(`[NextAPI] Requesting GET: ${loginUrl}`);
     const getRes = await client.get(loginUrl);
     
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
     const profileData: any = {};
 
     // Step 3: Fetch Student Details
-    const detailsUrl = 'https://arms.sse.saveetha.com/Handler/Administration.ashx?Page=DashInstitute&Mode=StudentDetailsById';
+    const detailsUrl = `${ARMS_BASE_URL}/Handler/Administration.ashx?Page=DashInstitute&Mode=StudentDetailsById`;
     console.log(`[NextAPI] Requesting GET: ${detailsUrl}`);
     const detailsRes = await client.get(detailsUrl);
     console.log(`[NextAPI] GET Response Status: ${detailsRes.status}`);
@@ -97,7 +99,7 @@ export async function POST(request: Request) {
     profileData.profilePictureUrl = (student.ProfilePictureUrl || '').trim();
 
     // Step 4: Fetch Notifications
-    const notifUrl = 'https://arms.sse.saveetha.com/Handler/Administration.ashx?Page=DashInstitute&Mode=StudentNotificationPushData&CId=0';
+    const notifUrl = `${ARMS_BASE_URL}/Handler/Administration.ashx?Page=DashInstitute&Mode=StudentNotificationPushData&CId=0`;
     console.log(`[NextAPI] Requesting GET: ${notifUrl}`);
     const notifRes = await client.get(notifUrl);
     console.log(`[NextAPI] GET Response Status: ${notifRes.status}`);
@@ -118,7 +120,7 @@ export async function POST(request: Request) {
     profileData.notifications = notifications;
 
     // Step 5: Fetch Course Results & Calculate CGPA
-    const resultsUrl = 'https://arms.sse.saveetha.com/Handler/Student.ashx?Page=CourseEnroll&Mode=GetResult&Id=0';
+    const resultsUrl = `${ARMS_BASE_URL}/Handler/Student.ashx?Page=CourseEnroll&Mode=GetResult&Id=0`;
     console.log(`[NextAPI] Requesting GET: ${resultsUrl}`);
     const resultsRes = await client.get(resultsUrl);
     console.log(`[NextAPI] GET Response Status: ${resultsRes.status}`);
@@ -137,11 +139,16 @@ export async function POST(request: Request) {
           const status = (row.FinalResult || '').trim().toUpperCase();
           if (status === 'FAIL') continue;
 
-          const courseCode = (row.CourseCode || '').trim();
+          const courseCode = (row.CourseCode || '').trim().toUpperCase();
           
-          if (gradePoints[grade] !== undefined && courseCode.toUpperCase() !== 'SPIC1') {
-            totalPoints += gradePoints[grade];
-            totalCredits += 1;
+          let credits = 4;
+          if (courseCode === 'SPIC4') credits = 12;
+          if (courseCode === 'SPIC7') credits = 8;
+          if (courseCode === 'SPIC1') credits = 0;
+          
+          if (gradePoints[grade] !== undefined && courseCode !== 'SPIC1') {
+            totalPoints += (gradePoints[grade] * credits);
+            totalCredits += credits;
           }
           courses.push({
             sno: String(row.Sno || ''),
@@ -149,7 +156,8 @@ export async function POST(request: Request) {
             name: (row.CourseName || '').trim(),
             grade,
             status,
-            month_year: (row.MonthYearValue || '').trim()
+            month_year: (row.MonthYearValue || '').trim(),
+            credits
           });
         }
       }
@@ -157,10 +165,10 @@ export async function POST(request: Request) {
       console.warn('[NextAPI] Failed to fetch course results');
     }
     profileData.courses = courses;
-    profileData.cgpa = totalCredits > 0 ? Number((totalPoints / totalCredits).toFixed(2)) : 'N/A';
+    profileData.cgpa = totalCredits > 0 ? Number((totalPoints / totalCredits).toFixed(3)) : 'N/A';
 
     // Step 6: Fetch Attendance
-    const attendanceUrl = 'https://arms.sse.saveetha.com/Handler/Administration.ashx?Page=StudentAttendance&Mode=ATTENDANCEPGMPERSENT&Id=0&Sid=0&Date=&ToDate=';
+    const attendanceUrl = `${ARMS_BASE_URL}/Handler/Administration.ashx?Page=StudentAttendance&Mode=ATTENDANCEPGMPERSENT&Id=0&Sid=0&Date=&ToDate=`;
     console.log(`[NextAPI] Requesting GET: ${attendanceUrl}`);
     const attnRes = await client.get(attendanceUrl);
     console.log(`[NextAPI] GET Response Status: ${attnRes.status}`);

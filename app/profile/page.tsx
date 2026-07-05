@@ -11,6 +11,7 @@ export default function ProfilePage() {
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
@@ -47,7 +48,38 @@ export default function ProfilePage() {
   const handleLogout = () => {
     sessionStorage.removeItem("profile");
     localStorage.removeItem("profile");
+    localStorage.removeItem("saved_username");
+    localStorage.removeItem("saved_password");
     router.push("/");
+  };
+
+  const handleSync = async () => {
+    const savedUser = localStorage.getItem("saved_username");
+    const savedPass = localStorage.getItem("saved_password");
+    if (!savedUser || !savedPass) {
+      alert("No saved credentials found. Please logout and check 'Keep me logged in' to enable sync.");
+      return;
+    }
+    
+    setIsSyncing(true);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: savedUser, password: savedPass })
+      });
+      const data = await res.json();
+      if (res.status === 200) {
+        sessionStorage.setItem("profile", JSON.stringify(data));
+        localStorage.setItem("profile", JSON.stringify(data));
+        window.location.reload();
+      } else {
+        alert("Sync failed: " + (data.error || "Unknown error"));
+      }
+    } catch (e) {
+      alert("Network error during sync.");
+    }
+    setIsSyncing(false);
   };
 
   // Grade Distribution logic
@@ -213,8 +245,6 @@ export default function ProfilePage() {
               }}>
                 <h2 style={{ fontSize: "18px", fontWeight: "700", margin: 0, color: "white", textShadow: "0 2px 4px rgba(0,0,0,0.6)" }}>{profile.name}</h2>
                 <p style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "12px", margin: "4px 0 0 0", fontWeight: "600", textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>{profile.regno}</p>
-                {/* Tap hint — mobile only */}
-                <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "9px", margin: "4px 0 0 0", letterSpacing: "0.5px" }} className="profile-tap-hint">TAP FOR DETAILS</p>
               </div>
             </div>
           ) : (
@@ -229,7 +259,6 @@ export default function ProfilePage() {
               </div>
               <h2 style={{ fontSize: "18px", fontWeight: "700", margin: 0, color: "white", textAlign: "center" }}>{profile.name}</h2>
               <p style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "12px", margin: "4px 0 0 0", fontWeight: "600", textAlign: "center" }}>{profile.regno}</p>
-              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: "9px", margin: "6px 0 0 0", letterSpacing: "0.5px" }} className="profile-tap-hint">TAP FOR DETAILS</p>
             </div>
           )}
 
@@ -266,9 +295,17 @@ export default function ProfilePage() {
               </div>
               <div className="info-item" style={{ background: "rgba(255, 64, 129, 0.1)", margin: "10px -10px", padding: "15px 10px", borderRadius: "15px", border: "1px solid rgba(255, 64, 129, 0.2)" }}>
                 <i className="fas fa-chart-line" style={{ color: "#FF4081", background: "rgba(255, 64, 129, 0.2)" }}></i>
-                <div className="info-content">
-                  <label style={{ color: "#FF80AB", fontWeight: 700 }}>Current CGPA</label>
-                  <span style={{ fontSize: "20px", fontWeight: 800, color: "white" }}>{profile.cgpa}</span>
+                <div className="info-content" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <div>
+                    <label style={{ color: "#FF80AB", fontWeight: 700 }}>Current CGPA</label>
+                    <span style={{ fontSize: "20px", fontWeight: 800, color: "white" }}>{profile.cgpa}</span>
+                  </div>
+                  <div className="desktop-only-credits" style={{ textAlign: "right" }}>
+                    <label style={{ color: "rgba(255,255,255,0.6)", fontWeight: 700, fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Credits Earned</label>
+                    <span style={{ fontSize: "16px", fontWeight: 800, color: "white", display: "block" }}>
+                      {profile.courses?.reduce((sum: number, c: any) => sum + (c.credits || 0), 0) || 0}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -551,6 +588,11 @@ export default function ProfilePage() {
                             <td style={{ color: "var(--text-dim)", fontSize: "12px", textTransform: "uppercase" }}>{course.code}</td>
                             <td style={{ fontWeight: 600, color: "white" }}>
                               {course.name}
+                              {course.credits !== undefined && course.credits !== 4 && (
+                                <span style={{ marginLeft: "8px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>
+                                  {course.credits} Cr
+                                </span>
+                              )}
                               {course.code?.toUpperCase() === "SPIC1" && (
                                 <span style={{ marginLeft: "10px", background: "linear-gradient(135deg, #f59e0b, #d97706)", padding: "3px 8px", borderRadius: "12px", fontSize: "10px", color: "#ffffff", fontWeight: "bold", boxShadow: "0 0 12px rgba(245, 158, 11, 0.4)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                                   Not Graded
@@ -624,8 +666,18 @@ export default function ProfilePage() {
                         ))}
                       </svg>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
-                        <span style={{ fontSize: "28px", fontWeight: "800", color: "white", lineHeight: 1 }}>{profile.courses.length}</span>
-                        <span style={{ fontSize: "9px", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "1px", marginTop: "4px" }}>Courses</span>
+                        {/* Desktop: Courses Count */}
+                        <div className="desktop-doughnut-text" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ fontSize: "28px", fontWeight: "800", color: "white", lineHeight: 1 }}>{profile.courses.length}</span>
+                          <span style={{ fontSize: "9px", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "1px", marginTop: "4px" }}>Courses</span>
+                        </div>
+                        {/* Mobile: Credits Count */}
+                        <div className="mobile-doughnut-text" style={{ display: "none", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ fontSize: "28px", fontWeight: "800", color: "white", lineHeight: 1 }}>
+                            {profile.courses.reduce((sum: number, c: any) => sum + (c.credits || 0), 0)}
+                          </span>
+                          <span style={{ fontSize: "9px", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "1px", marginTop: "4px" }}>Credits</span>
+                        </div>
                       </div>
                     </div>
 
@@ -798,11 +850,38 @@ export default function ProfilePage() {
               </div>
             ))}
 
-            {/* Logout button */}
-            <div style={{ padding: "20px 24px 0" }}>
+            {/* Actions buttons */}
+            <div style={{ padding: "20px 24px 20px", display: "flex", gap: "10px", flexDirection: "column" }}>
+              <button
+                onClick={handleSync}
+                disabled={isSyncing}
+                onTouchEnd={(e) => { e.preventDefault(); if (!isSyncing) handleSync(); }}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "16px",
+                  color: "white",
+                  fontSize: "15px",
+                  fontWeight: 700,
+                  cursor: isSyncing ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  touchAction: "manipulation",
+                  transition: "background 0.2s"
+                }}
+              >
+                <i className={`fas fa-sync-alt ${isSyncing ? "fa-spin" : ""}`}></i> 
+                {isSyncing ? "Syncing..." : "Sync Latest Data"}
+              </button>
+
               <button
                 onClick={handleLogout}
-                onTouchEnd={(e) => { e.preventDefault(); handleLogout(); }}
+                disabled={isSyncing}
+                onTouchEnd={(e) => { e.preventDefault(); if (!isSyncing) handleLogout(); }}
                 style={{
                   width: "100%",
                   padding: "14px",
@@ -812,13 +891,14 @@ export default function ProfilePage() {
                   color: "white",
                   fontSize: "15px",
                   fontWeight: 700,
-                  cursor: "pointer",
+                  cursor: isSyncing ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "8px",
                   touchAction: "manipulation",
-                  boxShadow: "0 8px 20px rgba(255,64,129,0.35)"
+                  boxShadow: "0 8px 20px rgba(255,64,129,0.35)",
+                  opacity: isSyncing ? 0.6 : 1
                 }}
               >
                 <i className="fas fa-sign-out-alt"></i> Logout

@@ -189,6 +189,16 @@ input:focus {
     box-shadow: 0 0 0 4px rgba(255, 64, 129, 0.1);
 }
 
+/* Fix browser autofill styling */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px #111625 inset !important;
+    -webkit-text-fill-color: white !important;
+    transition: background-color 5000s ease-in-out 0s;
+}
+
 .form-options {
     display: flex;
     justify-content: space-between;
@@ -790,6 +800,16 @@ tr:hover td {
 }
 
 @media (max-width: 768px) {
+    .desktop-only-credits {
+        display: none !important;
+    }
+    .desktop-doughnut-text {
+        display: none !important;
+    }
+    .mobile-doughnut-text {
+        display: flex !important;
+    }
+
     body { padding: 10px; }
     .sidebar { flex-direction: column; position: static; }
     .top-bar { flex-direction: column; align-items: flex-start; gap: 15px; }
@@ -2012,6 +2032,107 @@ tr:hover td {
         opacity: 0.85 !important;
     }
 }
+
+/* ----------------------------------------------------
+   MICRO ANIMATIONS (Hover, Active, Mount States)
+   ---------------------------------------------------- */
+
+/* 1. Cards and Panels Hover & Active States */
+.glass-panel, .course-card, .info-item {
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+@media (hover: hover) {
+    .glass-panel:hover, .course-card:hover {
+        transform: translateY(-4px) scale(1.01);
+        box-shadow: 0 15px 35px -10px rgba(0,0,0,0.6);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+}
+
+.glass-panel:active, .course-card:active, .info-item:active {
+    transform: translateY(0px) scale(0.98);
+}
+
+/* 2. Interactive Icons */
+.stat-icon, .info-item i {
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.4s ease;
+}
+
+@media (hover: hover) {
+    .stat-card:hover .stat-icon, .info-item:hover i {
+        transform: scale(1.2) rotate(8deg);
+    }
+}
+
+/* 3. Button Micro-interactions */
+button {
+    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+}
+
+@media (hover: hover) {
+    button:hover:not(:disabled) {
+        transform: translateY(-2px);
+        filter: brightness(1.1);
+    }
+}
+
+button:active:not(:disabled) {
+    transform: translateY(1px) scale(0.96) !important;
+    filter: brightness(0.95);
+}
+
+/* 4. Chart / Graphic Hover */
+.circular-chart-container, .avatar-fallback-wrapper {
+    transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@media (hover: hover) {
+    .circular-chart-container:hover {
+        transform: scale(1.05);
+    }
+    
+    .avatar-fallback-wrapper:hover {
+        transform: translateY(-5px);
+    }
+    .avatar-fallback-wrapper:hover .avatar-large {
+        transform: scale(1.1) rotate(5deg);
+        box-shadow: 0 0 20px rgba(255,255,255,0.4);
+    }
+}
+
+/* 5. Staggered List Entry Animation (for courses and info items) */
+@keyframes slideFadeUp {
+    0% { opacity: 0; transform: translateY(20px) scale(0.98); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.course-card {
+    animation: slideFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.course-card:nth-child(1) { animation-delay: 0.05s; }
+.course-card:nth-child(2) { animation-delay: 0.10s; }
+.course-card:nth-child(3) { animation-delay: 0.15s; }
+.course-card:nth-child(4) { animation-delay: 0.20s; }
+.course-card:nth-child(5) { animation-delay: 0.25s; }
+.course-card:nth-child(n+6) { animation-delay: 0.30s; }
+
+.info-item {
+    animation: slideFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.info-item:nth-child(1) { animation-delay: 0.1s; }
+.info-item:nth-child(2) { animation-delay: 0.15s; }
+.info-item:nth-child(3) { animation-delay: 0.2s; }
+.info-item:nth-child(4) { animation-delay: 0.25s; }
+.info-item:nth-child(5) { animation-delay: 0.3s; }
+
+/* 6. Top Bar Title Slide */
+.welcome-text h1, .welcome-text p {
+    animation: slideFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.welcome-text p { animation-delay: 0.1s; }
 
 
 

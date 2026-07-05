@@ -8,8 +8,48 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "ARMS Portal - Student Dashboard",
+  metadataBase: new URL("https://armsconnect.vercel.app"),
+  title: {
+    default: "ARMS Portal - Student Dashboard",
+    template: "%s | ARMS Portal",
+  },
   description: "Experience the next generation of student portals with real-time academic analytics.",
+  applicationName: "ARMS Portal",
+  keywords: [
+    "student portal",
+    "college dashboard",
+    "attendance tracker",
+    "academic analytics",
+    "student profile",
+    "ARMS Portal",
+  ],
+  alternates: {
+    canonical: "https://armsconnect.vercel.app/",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  openGraph: {
+    title: "ARMS Portal - Student Dashboard",
+    description: "Experience the next generation of student portals with real-time academic analytics.",
+    url: "https://armsconnect.vercel.app/",
+    siteName: "ARMS Portal",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ARMS Portal - Student Dashboard",
+    description: "Experience the next generation of student portals with real-time academic analytics.",
+  },
   icons: {
     icon: "/favicon.ico",
   },
