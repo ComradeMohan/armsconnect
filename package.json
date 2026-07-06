@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@vercel/speed-insights": "^2.0.0",
     "axios": "^1.18.1",
     "axios-cookiejar-support": "^7.0.0",
     "cheerio": "^1.2.0",
