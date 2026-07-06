@@ -13,8 +13,20 @@ export default function ProfilePage() {
   const [mounted, setMounted] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
+
+  // Loading timeout detection
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!profile) {
+        setLoadingTimeout(true);
+      }
+    }, 3000); // 3 seconds
+
+    return () => clearTimeout(timeout);
+  }, [profile]);
 
   // Lock body scroll when modals are open
   useEffect(() => {
@@ -50,6 +62,12 @@ export default function ProfilePage() {
     localStorage.removeItem("profile");
     localStorage.removeItem("saved_username");
     localStorage.removeItem("saved_password");
+    router.push("/");
+  };
+
+  const handleClearCache = () => {
+    sessionStorage.clear();
+    localStorage.clear();
     router.push("/");
   };
 
@@ -146,11 +164,39 @@ export default function ProfilePage() {
 
   if (!profile) {
     return (
-      <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "20px" }}>
         <div>
           <div className="spinner"></div>
           <p style={{ color: "var(--text-dim)", textAlign: "center", marginTop: "20px" }}>Loading Dashboard...</p>
         </div>
+        {loadingTimeout && (
+          <button
+            onClick={handleClearCache}
+            style={{
+              background: "linear-gradient(135deg, #FF4081, #FF80AB)",
+              border: "none",
+              borderRadius: "12px",
+              color: "white",
+              padding: "12px 24px",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              boxShadow: "0 4px 12px rgba(255, 64, 129, 0.3)",
+              transition: "transform 0.2s ease, box-shadow 0.2s ease"
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 6px 16px rgba(255, 64, 129, 0.4)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(255, 64, 129, 0.3)';
+            }}
+          >
+            <i className="fas fa-trash-alt" style={{ marginRight: "8px" }}></i>
+            Clear Cache & Login
+          </button>
+        )}
       </div>
     );
   }
@@ -158,20 +204,44 @@ export default function ProfilePage() {
   // Linkify helper for notifications
   const renderMessage = (text: string) => {
     const urlPattern = /(https?:\/\/[^\s]+)/g;
-    if (!urlPattern.test(text)) {
-      return <p className="note-msg">{text}</p>;
-    }
-
     const urls = text.match(urlPattern);
-    const cleanText = text.replace(urlPattern, "").trim();
 
     return (
       <>
-        {cleanText && <p className="note-msg" style={{ marginBottom: "5px" }}>{cleanText}</p>}
+        <p className="note-msg" style={{ marginBottom: "8px", wordBreak: "break-word" }}>{text}</p>
         {urls && urls.map((url, i) => (
-          <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="notif-link-btn">
-            <i className="fas fa-external-link-alt"></i> Open Resource
-          </a>
+          <button 
+            key={i} 
+            onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+            className="notif-link-btn"
+            style={{
+              background: "linear-gradient(135deg, #FF4081, #FF80AB)",
+              border: "none",
+              borderRadius: "10px",
+              color: "white",
+              padding: "10px 16px",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              width: "fit-content",
+              marginTop: "5px",
+              boxShadow: "0 4px 12px rgba(255, 64, 129, 0.3)",
+              transition: "transform 0.2s ease, box-shadow 0.2s ease"
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 6px 16px rgba(255, 64, 129, 0.4)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(255, 64, 129, 0.3)';
+            }}
+          >
+            <i className="fas fa-external-link-alt"></i> Open Link
+          </button>
         ))}
       </>
     );
@@ -218,7 +288,7 @@ export default function ProfilePage() {
         <div className="glass-panel profile-card-panel" style={{ padding: 0, overflow: "hidden" }}>
           {profile.profilePictureUrl && !imgError ? (
             <div
-              className="profile-photo-wrapper"
+              className="profile-photo-wrapper desktop-profile-wrapper"
               onClick={() => setShowProfileModal(true)}
               onTouchEnd={(e) => { e.preventDefault(); setShowProfileModal(true); }}
               style={{ width: "100%", height: "280px", position: "relative", cursor: "pointer" }}
@@ -249,7 +319,7 @@ export default function ProfilePage() {
             </div>
           ) : (
             <div
-              className="avatar-fallback-wrapper"
+              className="avatar-fallback-wrapper desktop-avatar-wrapper"
               onClick={() => setShowProfileModal(true)}
               onTouchEnd={(e) => { e.preventDefault(); setShowProfileModal(true); }}
               style={{ width: "100%", height: "200px", background: "var(--primary-gradient)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "20px", cursor: "pointer" }}
@@ -267,35 +337,35 @@ export default function ProfilePage() {
             <div className="info-list" style={{ marginTop: "0" }}>
               <div className="info-item">
                 <i className="fas fa-graduation-cap"></i>
-                <div className="info-content">
+                <div className="info-content" style={{ gap: "2px" }}>
                   <label>Program</label>
                   <span>{profile.program}</span>
                 </div>
               </div>
               <div className="info-item">
                 <i className="fas fa-calendar-alt"></i>
-                <div className="info-content">
+                <div className="info-content" style={{ gap: "2px" }}>
                   <label>Date of Birth</label>
                   <span>{profile.dob}</span>
                 </div>
               </div>
               <div className="info-item">
                 <i className="fas fa-envelope"></i>
-                <div className="info-content">
+                <div className="info-content" style={{ gap: "2px" }}>
                   <label>Email</label>
                   <span style={{ fontSize: "11px" }}>{profile.email}</span>
                 </div>
               </div>
               <div className="info-item">
                 <i className="fas fa-phone"></i>
-                <div className="info-content">
+                <div className="info-content" style={{ gap: "2px" }}>
                   <label>Mobile</label>
                   <span>{profile.mobile}</span>
                 </div>
               </div>
               <div className="info-item" style={{ background: "rgba(255, 64, 129, 0.1)", margin: "10px -10px", padding: "15px 10px", borderRadius: "15px", border: "1px solid rgba(255, 64, 129, 0.2)" }}>
                 <i className="fas fa-chart-line" style={{ color: "#FF4081", background: "rgba(255, 64, 129, 0.2)" }}></i>
-                <div className="info-content" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <div className="info-content" style={{ display: 'flex', flexDirection: 'row', gap: 0, justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                   <div>
                     <label style={{ color: "#FF80AB", fontWeight: 700 }}>Current CGPA</label>
                     <span style={{ fontSize: "20px", fontWeight: 800, color: "white" }}>{profile.cgpa}</span>
@@ -774,7 +844,7 @@ export default function ProfilePage() {
                     <span className="notif-modal-by">{note.by}</span>
                     <span className="notif-modal-date">{note.datetime}</span>
                   </div>
-                  <p className="notif-modal-message">{note.message}</p>
+                  {renderMessage(note.message)}
                 </div>
               ))}
             </div>

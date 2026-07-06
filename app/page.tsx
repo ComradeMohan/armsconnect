@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,6 +14,7 @@ export default function LoginPage() {
   const [loadingStatus, setLoadingStatus] = useState("Connecting to ARMS...");
   const [progress, setProgress] = useState(0);
   const [keepMeLoggedIn, setKeepMeLoggedIn] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
 
 
 
@@ -43,6 +45,12 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!acceptTerms) {
+      setError("Please accept the Terms and Conditions to continue.");
+      return;
+    }
+    
     setError("");
     setIsLoading(true);
     setProgress(0);
@@ -191,6 +199,35 @@ export default function LoginPage() {
                 </label>
               </div>
 
+              <div className="terms-checkbox" style={{ marginBottom: "20px" }}>
+                <label className="remember-me" style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "13px", color: "var(--text-dim)", userSelect: "none", lineHeight: "1.5" }}>
+                  <div style={{
+                    width: "20px",
+                    height: "20px",
+                    borderRadius: "6px",
+                    border: acceptTerms ? "none" : "2px solid rgba(255, 255, 255, 0.2)",
+                    background: acceptTerms ? "linear-gradient(135deg, #FF4081, #FF80AB)" : "transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.2s ease",
+                    flexShrink: 0,
+                    marginTop: "2px"
+                  }}>
+                    {acceptTerms && <i className="fas fa-check" style={{ color: "white", fontSize: "12px" }}></i>}
+                  </div>
+                  <input 
+                    type="checkbox" 
+                    checked={acceptTerms}
+                    onChange={(e) => setAcceptTerms(e.target.checked)}
+                    style={{ display: "none" }} 
+                  />
+                  <span>
+                    I agree to the <Link href="/terms" style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Terms and Conditions</Link>, <Link href="/privacy" style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Privacy Policy</Link>, and <Link href="/warnings" style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Warnings</Link>
+                  </span>
+                </label>
+              </div>
+
               <button type="button" onClick={handleSubmit} className="sign-in-btn" style={{
                 background: "linear-gradient(135deg, #FF4081, #FF80AB)",
                 border: "none",
@@ -214,6 +251,110 @@ export default function LoginPage() {
               >
                 Sign In to ARMSConnect <i className="fas fa-arrow-right"></i>
               </button>
+            </div>
+          </div>
+
+          {/* Right: Info Banner */}
+          <div className="info-section">
+            <div className="info-content">
+              <div className="hero-section">
+                <h1 className="hero-title">See Your ARMS Data, Reimagined.</h1>
+                <p className="hero-subtitle">
+                  ARMSConnect securely retrieves your academic information from the official ARMS portal and transforms it into an easy-to-read dashboard with grades, credits, CGPA, and visual insights.
+                </p>
+              </div>
+
+              <div className="features-grid">
+                <div className="feature-card">
+                  <div className="feature-icon">📊</div>
+                  <h3>Smart Dashboard</h3>
+                  <p>Everything important displayed in one clean dashboard. No more searching through multiple ARMS pages.</p>
+                </div>
+
+                <div className="feature-card">
+                  <div className="feature-icon">📈</div>
+                  <h3>Visual Analytics</h3>
+                  <p>Understand your academic performance through charts, grade distributions, credit summaries, and CGPA insights.</p>
+                </div>
+
+                <div className="feature-card">
+                  <div className="feature-icon">🎓</div>
+                  <h3>Better Grade View</h3>
+                  <p>Quickly view grades, credits, subject status, and results without navigating multiple pages.</p>
+                </div>
+
+                <div className="feature-card">
+                  <div className="feature-icon">⚡</div>
+                  <h3>One Login</h3>
+                  <p>Use your existing ARMS credentials. No separate account required.</p>
+                </div>
+
+                <div className="feature-card">
+                  <div className="feature-icon">📱</div>
+                  <h3>Optimized Experience</h3>
+                  <p>Works beautifully on mobile, tablet, and desktop devices.</p>
+                </div>
+
+                <div className="feature-card">
+                  <div className="feature-icon">🔄</div>
+                  <h3>Real-Time Data</h3>
+                  <p>Displays the latest information available from your ARMS account whenever you log in.</p>
+                </div>
+              </div>
+
+              <div className="highlight-cards">
+                <div className="highlight-item">✓ Grades at a Glance</div>
+                <div className="highlight-item">✓ CGPA Overview</div>
+                <div className="highlight-item">✓ Credit Summary</div>
+                <div className="highlight-item">✓ Interactive Charts</div>
+                <div className="highlight-item">✓ Cleaner Interface</div>
+                <div className="highlight-item">✓ Faster Navigation</div>
+              </div>
+
+              <div className="comparison-section">
+                <h3>Why ARMSConnect?</h3>
+                <div className="comparison-table">
+                  <div className="comparison-column">
+                    <h4>Official Portal</h4>
+                    <ul>
+                      <li>❌ Multiple pages</li>
+                      <li>❌ Limited visualization</li>
+                      <li>❌ Difficult to interpret</li>
+                      <li>❌ Hidden academic insights</li>
+                    </ul>
+                  </div>
+                  <div className="comparison-column comparison-highlight">
+                    <h4>ARMSConnect</h4>
+                    <ul>
+                      <li>✅ One unified dashboard</li>
+                      <li>✅ Interactive charts</li>
+                      <li>✅ Grade summaries</li>
+                      <li>✅ Credit overview</li>
+                      <li>✅ Modern responsive interface</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="banner-quote">
+                <p>"Spend less time searching through the portal and more time understanding your academic progress."</p>
+              </div>
+
+              <div className="banner-subtitle">
+                <h3>Your data. Better presented.</h3>
+                <p>ARMSConnect doesn't replace ARMS—it enhances the way you view your academic information.</p>
+              </div>
+
+              <div className="security-section">
+                <h3>🔒 Secure Access</h3>
+                <p>Your ARMS credentials are used only to access your academic data. We do not modify any academic records. We simply present the information in a cleaner and more insightful format.</p>
+              </div>
+
+              <div className="footer-disclaimer">
+                <p>
+                  <strong>ARMSConnect is an independent student-developed interface.</strong> It is not affiliated with or endorsed by Saveetha School of Engineering or the official ARMS portal. All academic information displayed belongs to the logged-in user and is retrieved from the official portal for visualization purposes only.
+                </p>
+              </div>
             </div>
           </div>
         </div>
