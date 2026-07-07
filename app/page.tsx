@@ -223,7 +223,7 @@ export default function LoginPage() {
                     style={{ display: "none" }} 
                   />
                   <span>
-                    I agree to the <Link href="/terms" style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Terms and Conditions</Link>, <Link href="/privacy" style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Privacy Policy</Link>, and <Link href="/warnings" style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Warnings</Link>
+                    I agree to the <Link href="/terms" prefetch={false} style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Terms and Conditions</Link>, <Link href="/privacy" prefetch={false} style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Privacy Policy</Link>, and <Link href="/warnings" prefetch={false} style={{ color: "#FF80AB", textDecoration: "none", fontWeight: 600 }}>Warnings</Link>
                   </span>
                 </label>
               </div>
