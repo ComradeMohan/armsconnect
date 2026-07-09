@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
@@ -8,14 +8,282 @@ export default function ProfilePage() {
   const router = useRouter();
   const [profile, setProfile] = useState<any>(null);
   const [imgError, setImgError] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
   const [loadingTimeout, setLoadingTimeout] = useState(false);
+  const [expandedCourseSno, setExpandedCourseSno] = useState<string | null>(null);
+  const [courseMarks, setCourseMarks] = useState<{
+    [sno: string]: {
+      loading: boolean;
+      marks: any[] | null;
+      error: string | null;
+    }
+  }>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("saveetha_course_marks");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          const clean: any = {};
+          for (const key of Object.keys(parsed)) {
+            clean[key] = {
+              ...parsed[key],
+              loading: false
+            };
+          }
+          return clean;
+        }
+      } catch (e) {
+        console.warn("Failed to load course marks from localStorage:", e);
+      }
+    }
+    return {};
+  });
+
+  const parseMonthYearString = (my: string): Date => {
+    const parts = my.split('-');
+    if (parts.length !== 2) return new Date(0);
+    const monthName = parts[0].toLowerCase();
+    const year = parseInt(parts[1], 10);
+    const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    const monthIndex = monthNames.findIndex(m => monthName.startsWith(m));
+    if (monthIndex === -1) return new Date(0);
+    return new Date(year, monthIndex, 1);
+  };
+
+  const loadMarksForCourse = async (course: any) => {
+    if (!profile || !profile.sessionId) return;
+    
+    // If already loading or loaded, do not fetch again
+    if (courseMarks[course.sno]?.loading || courseMarks[course.sno]?.marks) return;
+
+    setCourseMarks(prev => ({
+      ...prev,
+      [course.sno]: { loading: true, marks: null, error: null }
+    }));
+
+    try {
+      const res = await fetch("/api/profile/marks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: profile.regno,
+          sessionId: profile.sessionId,
+          courseCode: course.code,
+          monthYear: course.month_year
+        })
+      });
+
+      const data = await res.json();
+      if (res.status === 200 && data.success) {
+        setCourseMarks(prev => ({
+          ...prev,
+          [course.sno]: { loading: false, marks: data.marks, error: null }
+        }));
+      } else {
+        setCourseMarks(prev => ({
+          ...prev,
+          [course.sno]: { loading: false, marks: null, error: data.error || "Failed to load marks" }
+        }));
+      }
+    } catch (err: any) {
+      setCourseMarks(prev => ({
+        ...prev,
+        [course.sno]: { loading: false, marks: null, error: err.message || "Failed to load marks" }
+      }));
+    }
+  };
+
+  const getCourseMarksDetails = (course: any) => {
+    const state = courseMarks[course.sno];
+    return {
+      loading: state?.loading ?? false,
+      marks: state?.marks ?? course.marks ?? null,
+      error: state?.error ?? course.marksError ?? null
+    };
+  };
+
+  // Progressive background loading
+  useEffect(() => {
+    if (!profile || (!profile.courses && !profile.failedCourses)) return;
+
+    const allCourses = [...(profile.courses || []), ...(profile.failedCourses || [])];
+
+
+    const loadAllProgressively = async () => {
+      const coursesToFetch = allCourses.filter(c => {
+        const cached = courseMarks[c.sno];
+        return !cached || (!cached.marks && !cached.error);
+      });
+
+      if (coursesToFetch.length === 0) return;
+
+      setCourseMarks(prev => {
+        const next = { ...prev };
+        coursesToFetch.forEach(c => {
+          next[c.sno] = { loading: true, marks: null, error: null };
+        });
+        return next;
+      });
+
+      const batchSize = 6;
+      const batches: any[][] = [];
+      for (let i = 0; i < coursesToFetch.length; i += batchSize) {
+        batches.push(coursesToFetch.slice(i, i + batchSize));
+      }
+
+      let completedCount = 0;
+
+      const fetchPromises = batches.map(async (batch) => {
+        try {
+          const res = await fetch("/api/profile/marks", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              username: profile.regno,
+              sessionId: profile.sessionId,
+              courses: batch.map(c => ({
+                sno: c.sno,
+                courseCode: c.code,
+                monthYear: c.month_year
+              }))
+            })
+          });
+
+          const data = await res.json();
+          if (data.success && data.results) {
+            setCourseMarks(prev => {
+              const next = { ...prev };
+              for (const sno of Object.keys(data.results)) {
+                next[sno] = {
+                  loading: false,
+                  marks: data.results[sno].marks,
+                  error: data.results[sno].error
+                };
+              }
+              return next;
+            });
+          } else {
+            setCourseMarks(prev => {
+              const next = { ...prev };
+              batch.forEach(c => {
+                if (next[c.sno]?.loading) {
+                  next[c.sno] = { loading: false, marks: null, error: data.error || 'Failed' };
+                }
+              });
+              return next;
+            });
+          }
+        } catch (e: any) {
+          console.error("Batch marks query error:", e);
+          setCourseMarks(prev => {
+            const next = { ...prev };
+            batch.forEach(c => {
+              if (next[c.sno]?.loading) {
+                next[c.sno] = { loading: false, marks: null, error: e.message || 'Failed' };
+              }
+            });
+            return next;
+          });
+        } finally {
+          completedCount += batch.length;
+          if (completedCount >= coursesToFetch.length) {
+            setToastMessage("All marks fetched successfully!");
+            setTimeout(() => {
+              setToastMessage(null);
+            }, 3500);
+          }
+        }
+      });
+
+      await Promise.all(fetchPromises);
+    };
+
+    loadAllProgressively();
+  }, [profile]);
+
 
   useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    const timer = setTimeout(() => {
+      const dismissed = sessionStorage.getItem("pwa_install_dismissed");
+      if (!dismissed) {
+        setShowInstallBanner(true);
+      }
+    }, 10000); // 10 seconds
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      clearTimeout(timer);
+    };
+  }, []);
+
+  const handleInstall = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`PWA install prompt outcome: ${outcome}`);
+      setDeferredPrompt(null);
+      setShowInstallBanner(false);
+    } else {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+      if (isIOS) {
+        alert("To install, tap the Share icon at the bottom of Safari and select 'Add to Home Screen'.");
+      } else {
+        alert("PWA installation is not supported by your current browser. You can install it from your browser menu or use Chrome.");
+      }
+      setShowInstallBanner(false);
+      sessionStorage.setItem("pwa_install_dismissed", "true");
+    }
+  };
+
+  const handleDismissInstall = () => {
+    setShowInstallBanner(false);
+    sessionStorage.setItem("pwa_install_dismissed", "true");
+  };
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__PROFILE_DATA__ = profile;
+      (window as any).__COURSE_MARKS__ = courseMarks;
+    }
+  }, [profile, courseMarks]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && Object.keys(courseMarks).length > 0) {
+      try {
+        const toSave: any = {};
+        for (const key of Object.keys(courseMarks)) {
+          if (courseMarks[key].marks) {
+            toSave[key] = courseMarks[key];
+          }
+        }
+        if (Object.keys(toSave).length > 0) {
+          localStorage.setItem("saveetha_course_marks", JSON.stringify(toSave));
+        }
+      } catch (e) {
+        console.warn("Failed to save course marks to localStorage:", e);
+      }
+    }
+  }, [courseMarks]);
 
   // Loading timeout detection
   useEffect(() => {
@@ -57,11 +325,557 @@ export default function ProfilePage() {
     }
   }, [router]);
 
+  const handleDownloadHTML = () => {
+    if (!profile) return;
+
+    const regNo = profile.regno || "student";
+    const name = profile.name || "Student Dashboard";
+    const creditsEarned = (profile.courses || []).reduce((sum: number, c: any) => sum + (c.credits || 0), 0);
+
+    // 1. Pre-render Attendance Section
+    const attendanceHtml = (profile.attendance && profile.attendance.length > 0 && !profile.attendance[0].error)
+      ? `
+        <div class="glass-panel">
+            <div class="section-header">
+                <h3><i class="fas fa-chart-pie" style="color: #4DB6AC;"></i> Attendance Insights</h3>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Subject</th>
+                            <th>Classes</th>
+                            <th>Percentage</th>
+                            <th>Insights</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${profile.attendance.map((sub: any) => {
+                            const pctVal = parseFloat(sub.percentage.replace("%", "")) || 0;
+                            const targetRatio = 0.8;
+                            const attended = Number(sub.hours_attended) || 0;
+                            const total = Number(sub.total_class) || 0;
+                            let tag = '';
+                            if (pctVal >= 80) {
+                              const maxBunk = Math.floor((attended - targetRatio * total) / targetRatio);
+                              tag = maxBunk > 0 ? `<span class="smart-tag tag-safe">Can Bunk ${maxBunk}</span>` : `<span class="smart-tag tag-safe">Safe Zone</span>`;
+                            } else {
+                              const needClasses = Math.ceil((targetRatio * total - attended) / (1 - targetRatio));
+                              tag = `<span class="smart-tag tag-danger">Need ${needClasses}+ Classes</span>`;
+                            }
+                            return `
+                            <tr>
+                                <td>
+                                    <div style="font-weight: 600;">${sub.name}</div>
+                                    <div style="font-size: 11px; color: var(--text-dim);">${sub.code}</div>
+                                </td>
+                                <td>${sub.hours_attended} / ${sub.total_class}</td>
+                                <td>
+                                    <div class="circular-progress" style="--progress: ${pctVal}%">
+                                        <span class="circular-progress-text">${Math.round(pctVal)}%</span>
+                                    </div>
+                                </td>
+                                <td>${tag}</td>
+                            </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+      `
+      : '';
+
+    // 2. Pre-render Completed Courses Section
+    const completedCoursesHtml = (profile.courses || []).map((course: any) => {
+      const uppercaseGrade = (course.grade || '').toUpperCase();
+      let badgeBg = "rgba(255, 255, 255, 0.1)";
+      if (uppercaseGrade === "S") badgeBg = "linear-gradient(135deg, #d946ef, #a855f7)";
+      else if (uppercaseGrade === "A") badgeBg = "linear-gradient(135deg, #10b981, #059669)";
+      else if (uppercaseGrade === "B") badgeBg = "linear-gradient(135deg, #3b82f6, #2563eb)";
+      else if (uppercaseGrade === "C") badgeBg = "linear-gradient(135deg, #f59e0b, #d97706)";
+      else if (uppercaseGrade === "D") badgeBg = "linear-gradient(135deg, #f97316, #ea580c)";
+      else if (uppercaseGrade === "E") badgeBg = "linear-gradient(135deg, #ef4444, #dc2626)";
+
+      const marksData = courseMarks[course.sno];
+      let marksHtml = '';
+      let totalObtained = 0;
+      let hasMarks = false;
+
+      if (marksData && marksData.marks && marksData.marks.length > 0) {
+        hasMarks = true;
+        const targetCategories = [
+          "Class Test (IA)",
+          "Research",
+          "Class Practical",
+          "University Theory",
+          "University Practical"
+        ];
+        
+        marksHtml = `<div class="marks-grid">`;
+        targetCategories.forEach(cat => {
+          const found = (marksData.marks || []).find((m: any) => m.RubricCategory === cat);
+          if (found) {
+            const mark = parseFloat(found.OrginalConvertedMark) || 0;
+            totalObtained += mark;
+            marksHtml += `
+              <div class="mark-card">
+                  <div class="mark-card-title">${cat}</div>
+                  <div class="mark-card-value">${found.OrginalConvertedMark}</div>
+              </div>
+            `;
+          }
+        });
+        marksHtml += `</div>`;
+      } else {
+        marksHtml = `<div style="color: var(--text-dim); font-size: 12px; padding: 10px 0;"><i class="fas fa-info-circle"></i> Marks detail not loaded during export.</div>`;
+      }
+
+      return `
+      <tr class="course-row" onclick="toggleDetails('${course.sno}')">
+          <td>
+              <strong style="color: white; text-transform: uppercase;">${course.code}</strong>
+          </td>
+          <td>
+              <div style="font-weight: 500;">${course.name}</div>
+              ${hasMarks ? `<div style="margin-top: 4px;"><span class="score-pill">Total: ${totalObtained.toFixed(1)}/500</span></div>` : ''}
+          </td>
+          <td>
+              <span class="grade-badge" style="background: ${badgeBg};">${course.grade || '-'}</span>
+          </td>
+          <td>${course.month_year || '-'}</td>
+      </tr>
+      <tr class="expanded-row" id="details-${course.sno}">
+          <td colspan="4">
+              <div style="font-weight: 700; font-size: 12px; color: #FF80AB; text-transform: uppercase; margin-bottom: 8px;">Detailed Rubric Breakdown</div>
+              ${marksHtml}
+          </td>
+      </tr>
+      `;
+    }).join('');
+
+    // 3. Pre-render Failed Courses Section
+    const failedCoursesHtml = (profile.failedCourses && profile.failedCourses.length > 0)
+      ? `
+        <div class="glass-panel" style="border: 1px solid rgba(239, 68, 68, 0.2);">
+            <div class="section-header">
+                <h3><i class="fas fa-triangle-exclamation" style="color: #ef4444;"></i> Failed Subjects</h3>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Course Name</th>
+                            <th>Grade</th>
+                            <th>Session</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${profile.failedCourses.map((course: any) => {
+                            const marksData = courseMarks[course.sno];
+                            let marksHtml = '';
+                            let hasMarks = false;
+                            let totalObtained = 0;
+
+                            if (marksData && marksData.marks && marksData.marks.length > 0) {
+                              hasMarks = true;
+                              const targetCategories = [
+                                "Class Test (IA)",
+                                "Research",
+                                "Class Practical",
+                                "University Theory",
+                                "University Practical"
+                              ];
+                              marksHtml = `<div class="marks-grid">`;
+                              targetCategories.forEach(cat => {
+                                const found = (marksData.marks || []).find((m: any) => m.RubricCategory === cat);
+                                if (found) {
+                                  const mark = parseFloat(found.OrginalConvertedMark) || 0;
+                                  totalObtained += mark;
+                                  marksHtml += `
+                                    <div class="mark-card">
+                                        <div class="mark-card-title">${cat}</div>
+                                        <div class="mark-card-value">${found.OrginalConvertedMark}</div>
+                                    </div>
+                                  `;
+                                }
+                              });
+                              marksHtml += `</div>`;
+                            } else {
+                              marksHtml = `<div style="color: var(--text-dim); font-size: 12px; padding: 10px 0;"><i class="fas fa-info-circle"></i> Marks detail not loaded during export.</div>`;
+                            }
+
+                            return `
+                            <tr class="course-row" onclick="toggleDetails('failed-${course.sno}')">
+                                <td><strong style="color: #ef4444;">${course.code}</strong></td>
+                                <td>
+                                    <div style="font-weight: 500;">${course.name}</div>
+                                    ${hasMarks ? `<div style="margin-top: 4px;"><span class="score-pill">Total: ${totalObtained.toFixed(1)}/500</span></div>` : ''}
+                                </td>
+                                <td><span class="grade-badge" style="background: linear-gradient(135deg, #ef4444, #991b1b);">${course.grade || 'F'}</span></td>
+                                <td>${course.month_year || '-'}</td>
+                            </tr>
+                            <tr class="expanded-row" id="details-failed-${course.sno}">
+                                <td colspan="4">
+                                    <div style="font-weight: 700; font-size: 12px; color: #ef4444; text-transform: uppercase; margin-bottom: 8px;">Detailed Rubric Breakdown</div>
+                                    ${marksHtml}
+                                </td>
+                            </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+      `
+      : '';
+
+    // 4. Construct Final HTML Content
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARMS Academic Report - ${name} (${regNo})</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #FF80AB, #FF4081);
+            --secondary-gradient: linear-gradient(135deg, #7986CB, #3F51B5);
+            --success-gradient: linear-gradient(135deg, #4DB6AC, #009688);
+            --dark-glass: rgba(0, 0, 0, 0.4);
+            --light-glass: rgba(255, 255, 255, 0.05);
+            --border-glass: rgba(255, 255, 255, 0.1);
+            --text-main: #FFFFFF;
+            --text-dim: rgba(255, 255, 255, 0.7);
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+        body {
+            background: #090d16;
+            min-height: 100vh;
+            color: var(--text-main);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .header-panel {
+            background: var(--dark-glass);
+            border: 1px solid var(--border-glass);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .profile-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: var(--primary-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 800;
+            color: white;
+            box-shadow: 0 4px 15px rgba(255, 64, 129, 0.3);
+        }
+        .name-reg {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .name-reg h1 {
+            font-size: 20px;
+            font-weight: 800;
+        }
+        .name-reg p {
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+        .stats-badge-grid {
+            display: flex;
+            gap: 12px;
+        }
+        .stat-badge {
+            background: var(--light-glass);
+            border: 1px solid var(--border-glass);
+            border-radius: 16px;
+            padding: 12px 18px;
+            text-align: center;
+        }
+        .stat-badge span {
+            display: block;
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+        }
+        .stat-badge strong {
+            font-size: 16px;
+            color: #FF80AB;
+        }
+        .glass-panel {
+            background: var(--dark-glass);
+            border: 1px solid var(--border-glass);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            overflow: hidden;
+        }
+        .section-header {
+            padding: 20px 24px 15px;
+            border-bottom: 1px solid var(--border-glass);
+        }
+        .section-header h3 {
+            font-size: 16px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+        th, td {
+            padding: 14px 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            font-size: 13px;
+        }
+        th {
+            font-weight: 700;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+        }
+        .grade-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            font-size: 13px;
+            font-weight: 800;
+            color: white;
+        }
+        .course-row {
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .expanded-row {
+            display: none;
+            background: rgba(0, 0, 0, 0.15);
+        }
+        .expanded-row td {
+            padding: 16px 24px;
+        }
+        .marks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            padding: 10px 0;
+        }
+        .mark-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 10px 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+        .mark-card-title {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+        .mark-card-value {
+            font-size: 13px;
+            font-weight: 700;
+            color: #FF80AB;
+        }
+        .score-pill {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-dim);
+        }
+        .footer {
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 24px;
+            padding-bottom: 24px;
+        }
+        .smart-tag {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 700;
+            display: inline-block;
+        }
+        .tag-safe {
+            background: rgba(77, 182, 172, 0.15);
+            color: #4DB6AC;
+            border: 1px solid rgba(77, 182, 172, 0.25);
+        }
+        .tag-danger {
+            background: rgba(255, 64, 129, 0.15);
+            color: #FF4081;
+            border: 1px solid rgba(255, 64, 129, 0.25);
+        }
+        .circular-progress {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: conic-gradient(#4DB6AC var(--progress), rgba(255,255,255,0.05) 0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .circular-progress::after {
+            content: '';
+            position: absolute;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #090d16;
+        }
+        .circular-progress-text {
+            font-size: 9px;
+            font-weight: 700;
+            color: white;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-panel">
+            <div class="profile-info">
+                <div class="avatar">${name.charAt(0)}</div>
+                <div class="name-reg">
+                    <h1>${name}</h1>
+                    <p><i class="fas fa-id-card"></i> Reg No: ${regNo} | ${profile.program || 'Student'}</p>
+                </div>
+            </div>
+            <div class="stats-badge-grid">
+                <div class="stat-badge">
+                    <span>CGPA</span>
+                    <strong>${profile.cgpa || '0.00'}</strong>
+                </div>
+                <div class="stat-badge">
+                    <span>Credits</span>
+                    <strong>${creditsEarned}</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Attendance -->
+        ${attendanceHtml}
+
+        <!-- Completed Courses -->
+        <div class="glass-panel">
+            <div class="section-header">
+                <h3><i class="fas fa-award" style="color: #7986CB;"></i> Completed Courses</h3>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Course Name</th>
+                            <th>Grade</th>
+                            <th>Session</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${completedCoursesHtml}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Failed Courses (Arrears) -->
+        ${failedCoursesHtml}
+
+        <div class="footer">
+            <p>Generated by ARMS Connect on ${new Date().toLocaleDateString()}</p>
+            <p style="margin-top: 4px; color: rgba(255,255,255,0.3)">Offline Access Enabled. Keep this file to view your dashboard anytime without login.</p>
+        </div>
+    </div>
+
+    <script>
+        function toggleDetails(sno) {
+            const row = document.getElementById('details-' + sno);
+            if (row) {
+                const current = row.style.display;
+                if (current === 'table-row') {
+                    row.style.display = 'none';
+                } else {
+                    row.style.display = 'table-row';
+                }
+            }
+        }
+    </script>
+</body>
+</html>`;
+
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `arms_academic_report_${regNo}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleLogout = () => {
     sessionStorage.removeItem("profile");
     localStorage.removeItem("profile");
     localStorage.removeItem("saved_username");
     localStorage.removeItem("saved_password");
+    localStorage.removeItem("saveetha_course_marks");
     router.push("/");
   };
 
@@ -98,6 +912,49 @@ export default function ProfilePage() {
       alert("Network error during sync.");
     }
     setIsSyncing(false);
+  };
+
+  const toggleCourseVersion = (originalSno: string) => {
+    if (!profile || !profile.courses) return;
+
+    const updatedCourses = profile.courses.map((c: any) => {
+      if (c.sno === originalSno && c.allVersions && c.allVersions.length > 1) {
+        const nextIndex = (c.selectedVersionIndex + 1) % c.allVersions.length;
+        const nextV = c.allVersions[nextIndex];
+        return {
+          ...c,
+          selectedVersionIndex: nextIndex,
+          grade: nextV.grade,
+          month_year: nextV.month_year,
+          status: nextV.status,
+        };
+      }
+      return c;
+    });
+
+    // Recalculate CGPA
+    const gradePoints: any = {
+      'S': 10, 'A': 9, 'B': 8, 'C': 7, 'D': 6, 'E': 5,
+      'O': 10, 'A+': 9, 'B+': 7
+    };
+    let totalPoints = 0;
+    let totalCredits = 0;
+    updatedCourses.forEach((c: any) => {
+      const grade = c.grade?.toUpperCase();
+      const code = c.code?.toUpperCase();
+      if (gradePoints[grade] !== undefined && code !== 'SPIC1') {
+        totalPoints += (gradePoints[grade] * c.credits);
+        totalCredits += c.credits;
+      }
+    });
+
+    const newCgpa = totalCredits > 0 ? Number((totalPoints / totalCredits).toFixed(3)) : 'N/A';
+
+    setProfile({
+      ...profile,
+      courses: updatedCourses,
+      cgpa: newCgpa
+    });
   };
 
   // Grade Distribution logic
@@ -392,6 +1249,25 @@ export default function ProfilePage() {
             <p>Welcome back, your portal is synced.</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <button onClick={handleDownloadHTML} style={{
+              width: "auto",
+              margin: 0,
+              padding: "10px 18px",
+              borderRadius: "15px",
+              fontSize: "14px",
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              whiteSpace: "nowrap",
+              background: "rgba(255, 255, 255, 0.05)",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
+              color: "white",
+              cursor: "pointer",
+              transition: "background 0.2s"
+            }}>
+              <i className="fas fa-file-download" style={{ color: "#4DB6AC" }}></i> Save Offline Report
+            </button>
             <button onClick={handleLogout} className="logout-btn" style={{
               width: "auto",
               margin: 0,
@@ -520,11 +1396,11 @@ export default function ProfilePage() {
         })()}
 
         {/* Attendance Insights Section */}
-        <div className="glass-panel attendance-insights-panel" id="attendance-section">
-          <div className="section-header">
-            <h3><i className="fas fa-chart-pie" style={{ color: "#4DB6AC" }}></i> Attendance Insights</h3>
-          </div>
-          {profile.attendance && profile.attendance.length > 0 && !profile.attendance[0].error ? (
+        {profile.attendance && profile.attendance.length > 0 && !profile.attendance[0].error && (
+          <div className="glass-panel attendance-insights-panel" id="attendance-section">
+            <div className="section-header">
+              <h3><i className="fas fa-chart-pie" style={{ color: "#4DB6AC" }}></i> Attendance Insights</h3>
+            </div>
             <div className="table-container">
               <table>
                 <thead>
@@ -538,7 +1414,7 @@ export default function ProfilePage() {
                 <tbody>
                   {profile.attendance.map((subject: any) => {
                     const pctVal = parseFloat(subject.percentage.replace("%", ""));
-                    const isSafe = pctVal >= 75;
+                    const targetRatio = 0.8;
 
                     // SVG Progress Ring calculations
                     const radius = 16;
@@ -586,14 +1462,14 @@ export default function ProfilePage() {
                             const total = Number(subject.total_class);
                             const pct = (attended / total) * 100;
                             if (pct >= 80) {
-                              const maxBunk = Math.floor(attended - 0.8 * total);
+                              const maxBunk = Math.floor((attended - targetRatio * total) / targetRatio);
                               return maxBunk > 0 ? (
                                 <span className="smart-tag tag-safe">Can Bunk {maxBunk}</span>
                               ) : (
                                 <span className="smart-tag tag-safe">Safe Zone</span>
                               );
                             } else {
-                              const needClasses = Math.ceil((0.8 * total - attended) / 0.2);
+                              const needClasses = Math.ceil((targetRatio * total - attended) / (1 - targetRatio));
                               return (
                                 <span className="smart-tag tag-danger">Need {needClasses}+ Classes</span>
                               );
@@ -606,10 +1482,230 @@ export default function ProfilePage() {
                 </tbody>
               </table>
             </div>
-          ) : (
-            <p style={{ textAlign: "center", color: "var(--text-dim)", padding: "20px" }}>No attendance data available</p>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Failed Subjects (Arrears) Section */}
+        {profile.failedCourses && profile.failedCourses.length > 0 && (
+          <div className="glass-panel completed-courses-panel" id="arrears-section" style={{ border: "1px solid rgba(239, 68, 68, 0.25)", marginBottom: "20px" }}>
+            <div className="section-header">
+              <h3><i className="fas fa-triangle-exclamation" style={{ color: "#ef4444" }}></i> Failed Subjects (Arrears)</h3>
+            </div>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Course Name</th>
+                    <th>Grade</th>
+                    <th>Session</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profile.failedCourses.map((course: any) => {
+                    const isExpanded = expandedCourseSno === course.sno;
+                    const { loading, marks, error } = getCourseMarksDetails(course);
+                    
+                    const targetCategories = [
+                      "Class Test (IA)",
+                      "Research",
+                      "Class Practical",
+                      "University Theory",
+                      "University Practical"
+                    ];
+
+                    let totalObtained = 0;
+                    let hasTargetMarks = false;
+
+                    if (marks && Array.isArray(marks)) {
+                      marks.forEach((m: any) => {
+                        const category = m.RubricCategory ? m.RubricCategory.trim() : "";
+                        if (targetCategories.includes(category)) {
+                          const val = parseFloat(m.OrginalConvertedMark);
+                          if (!isNaN(val)) {
+                            totalObtained += val;
+                            hasTargetMarks = true;
+                          }
+                        }
+                      });
+                    }
+                    totalObtained = Math.round(totalObtained * 100) / 100;
+
+                    return (
+                      <Fragment key={course.sno}>
+                        <tr className={isExpanded ? "expanded-row-parent" : ""} style={{ transition: "background 0.2s" }}>
+                          <td 
+                            onClick={() => {
+                              setExpandedCourseSno(isExpanded ? null : course.sno);
+                              if (!isExpanded) {
+                                loadMarksForCourse(course);
+                              }
+                            }}
+                            style={{ color: "var(--text-dim)", fontSize: "12px", textTransform: "uppercase", cursor: "pointer", userSelect: "none" }}
+                          >
+                            <i 
+                              className="fas fa-chevron-right" 
+                              style={{ 
+                                marginRight: "8px", 
+                                transition: "transform 0.2s ease", 
+                                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                color: "#ef4444"
+                              }}
+                            />
+                            {course.code}
+                          </td>
+                          <td style={{ fontWeight: 600, color: "white" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                              <span>{course.name}</span>
+                              {loading ? (
+                                <i className="fas fa-spinner fa-spin mobile-only-score-pill" style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px" }}></i>
+                              ) : hasTargetMarks ? (
+                                <span className="mobile-only-score-pill" style={{ 
+                                  fontSize: "10px", 
+                                  fontWeight: "800", 
+                                  color: "#ef4444", 
+                                  background: "rgba(239, 68, 68, 0.08)",
+                                  border: "1px solid rgba(239, 68, 68, 0.15)",
+                                  padding: "2px 6px",
+                                  borderRadius: "8px",
+                                  whiteSpace: "nowrap"
+                                }}>
+                                  {totalObtained}/500
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <div style={{
+                                display: "flex",
+                                width: "30px",
+                                height: "30px",
+                                borderRadius: "50%",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: "800",
+                                fontSize: "13px",
+                                color: "white",
+                                background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                                boxShadow: "0 0 10px rgba(239, 68, 68, 0.5)",
+                                flexShrink: 0
+                              }}>
+                                {course.grade}
+                              </div>
+                              {loading ? (
+                                <i className="fas fa-spinner fa-spin desktop-only-score-pill" style={{ color: "rgba(255,255,255,0.3)", fontSize: "11px" }}></i>
+                              ) : hasTargetMarks ? (
+                                <span className="desktop-only-score-pill" style={{ 
+                                  fontSize: "11px", 
+                                  fontWeight: "800", 
+                                  color: "#ef4444", 
+                                  background: "rgba(239, 68, 68, 0.08)",
+                                  border: "1px solid rgba(239, 68, 68, 0.15)",
+                                  padding: "3px 8px",
+                                  borderRadius: "10px",
+                                  whiteSpace: "nowrap"
+                                }}>
+                                  {totalObtained}/500
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td style={{ color: "var(--text-dim)" }}>{course.month_year}</td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="expanded-row-details" style={{ background: "rgba(0, 0, 0, 0.25)" }}>
+                            <td colSpan={4} style={{ padding: "20px 24px" }} onClick={(e) => e.stopPropagation()}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "10px" }}>
+                                  <span style={{ fontSize: "12px", fontWeight: "800", color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                                    <i className="fas fa-chart-bar" style={{ marginRight: "6px" }}></i>
+                                    Detailed Score Card (Arrear)
+                                  </span>
+                                  {hasTargetMarks && (
+                                    <span style={{ 
+                                      background: "linear-gradient(135deg, #ef4444, #dc2626)", 
+                                      padding: "4px 12px", 
+                                      borderRadius: "30px", 
+                                      fontSize: "12px", 
+                                      fontWeight: "800", 
+                                      color: "white",
+                                      boxShadow: "0 4px 12px rgba(239, 68, 68, 0.3)"
+                                    }}>
+                                      Total Obtained: {totalObtained} / 500
+                                    </span>
+                                  )}
+                                </div>
+
+                                {loading ? (
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "15px 0", color: "var(--text-dim)", fontSize: "13px" }}>
+                                    <i className="fas fa-spinner fa-spin"></i>
+                                    <span>Syncing detailed marks splits...</span>
+                                  </div>
+                                ) : error ? (
+                                  <div style={{ color: "#ef4444", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", padding: "10px 0" }}>
+                                    <i className="fas fa-circle-exclamation"></i>
+                                    <span>{error}</span>
+                                  </div>
+                                ) : marks && Array.isArray(marks) && marks.length > 0 ? (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                                    {marks.map((m: any, mIdx: number) => {
+                                      const isPass = m.IsPassed === true || String(m.IsPassed).toLowerCase() === "true" || m.IsPassed === 1 || String(m.IsPassed).toUpperCase() === "PASS";
+                                      const scoreVal = parseFloat(m.OrginalConvertedMark);
+                                      const maxVal = parseFloat(m.RubricsMaxMark) || 100;
+                                      const percentage = maxVal > 0 && !isNaN(scoreVal) ? (scoreVal / maxVal) * 100 : 0;
+                                      const barColor = isPass ? "linear-gradient(90deg, #10b981, #059669)" : "linear-gradient(90deg, #ef4444, #dc2626)";
+
+                                      return (
+                                        <div key={mIdx} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px" }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                              <span style={{ fontWeight: "700", color: "white" }}>{m.RubricCategory}</span>
+                                              <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "11px" }}>({m.Type})</span>
+                                            </div>
+                                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                              <span style={{ fontWeight: "800", color: "white" }}>
+                                                {m.OrginalConvertedMark} <span style={{ opacity: 0.4, fontSize: "11px" }}>/ {m.RubricsMaxMark}</span>
+                                              </span>
+                                              <span style={{
+                                                fontSize: "10px",
+                                                fontWeight: "800",
+                                                padding: "2px 8px",
+                                                borderRadius: "8px",
+                                                background: isPass ? "rgba(16, 185, 129, 0.12)" : "rgba(239, 68, 68, 0.12)",
+                                                color: isPass ? "#10b981" : "#ef4444",
+                                                border: isPass ? "1px solid rgba(16, 185, 129, 0.25)" : "1px solid rgba(239, 68, 68, 0.25)"
+                                              }}>
+                                                {isPass ? "PASS" : "FAIL"}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <div style={{ height: "6px", background: "rgba(255, 255, 255, 0.05)", borderRadius: "10px", overflow: "hidden" }}>
+                                            <div style={{ height: "100%", width: `${percentage}%`, background: barColor, borderRadius: "10px", transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1)" }}></div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "13px", textAlign: "center", padding: "15px 0" }}>
+                                    No rubric/mark split details published for this course.
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+
 
         {/* Course History Section with Grade Distribution circular analytics */}
         <div className="glass-panel completed-courses-panel" id="grade-section">
@@ -653,41 +1749,242 @@ export default function ProfilePage() {
                         else if (uppercaseGrade === "D") { badgeBg = "linear-gradient(135deg, #f97316, #ea580c)"; badgeShadow = "0 0 10px rgba(249, 115, 22, 0.5)"; }
                         else if (uppercaseGrade === "E") { badgeBg = "linear-gradient(135deg, #ef4444, #dc2626)"; badgeShadow = "0 0 10px rgba(239, 68, 68, 0.5)"; }
 
+                        const isExpanded = expandedCourseSno === course.sno;
+                        const { loading, marks, error } = getCourseMarksDetails(course);
+
+                        // Calculate total marks from target categories
+                        const targetCategories = [
+                          "Class Test (IA)",
+                          "Research",
+                          "Class Practical",
+                          "University Theory",
+                          "University Practical"
+                        ];
+
+                        let totalObtained = 0;
+                        let hasTargetMarks = false;
+
+                        if (marks && Array.isArray(marks)) {
+                          marks.forEach((m: any) => {
+                            const category = m.RubricCategory ? m.RubricCategory.trim() : "";
+                            if (targetCategories.includes(category)) {
+                              const val = parseFloat(m.OrginalConvertedMark);
+                              if (!isNaN(val)) {
+                                totalObtained += val;
+                                hasTargetMarks = true;
+                              }
+                            }
+                          });
+                        }
+                        totalObtained = Math.round(totalObtained * 100) / 100;
+
                         return (
-                          <tr key={course.sno}>
-                            <td style={{ color: "var(--text-dim)", fontSize: "12px", textTransform: "uppercase" }}>{course.code}</td>
-                            <td style={{ fontWeight: 600, color: "white" }}>
-                              {course.name}
-                              {course.credits !== undefined && course.credits !== 4 && (
-                                <span style={{ marginLeft: "8px", background: "transparent", border: "1px solid rgba(255,255,255,0.15)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>
-                                  {course.credits} Cr
-                                </span>
-                              )}
-                              {course.code?.toUpperCase() === "SPIC1" && (
-                                <span style={{ marginLeft: "10px", background: "linear-gradient(135deg, #f59e0b, #d97706)", padding: "3px 8px", borderRadius: "12px", fontSize: "10px", color: "#ffffff", fontWeight: "bold", boxShadow: "0 0 12px rgba(245, 158, 11, 0.4)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                                  Not Graded
-                                </span>
-                              )}
-                            </td>
-                            <td>
-                              <div style={{
-                                display: "flex",
-                                width: "30px",
-                                height: "30px",
-                                borderRadius: "50%",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontWeight: "800",
-                                fontSize: "13px",
-                                color: "white",
-                                background: badgeBg,
-                                boxShadow: badgeShadow
-                              }}>
-                                {course.grade}
-                              </div>
-                            </td>
-                            <td style={{ color: "var(--text-dim)" }}>{course.month_year}</td>
-                          </tr>
+                           <Fragment key={course.sno}>
+                             <tr 
+                               className={isExpanded ? "expanded-row-parent" : ""}
+                               style={{ transition: "background 0.2s" }}
+                             >
+                               <td 
+                                 onClick={() => {
+                                   setExpandedCourseSno(isExpanded ? null : course.sno);
+                                   if (!isExpanded) {
+                                     loadMarksForCourse(course);
+                                   }
+                                 }}
+                                 style={{ color: "var(--text-dim)", fontSize: "12px", textTransform: "uppercase", cursor: "pointer", userSelect: "none" }}
+                                 title="Click to view detailed marks breakdown"
+                               >
+                                 <i 
+                                   className="fas fa-chevron-right" 
+                                   style={{ 
+                                     marginRight: "8px", 
+                                     transition: "transform 0.2s ease", 
+                                     transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                     color: "#FF80AB"
+                                   }}
+                                 />
+                                 {course.code}
+                               </td>
+                               <td style={{ fontWeight: 600, color: "white" }}>
+                                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                     <span>{course.name}</span>
+                                     {course.credits !== undefined && course.credits !== 4 && (
+                                       <span style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.15)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "rgba(255,255,255,0.4)", textTransform: "uppercase" }}>
+                                         {course.credits} Cr
+                                       </span>
+                                     )}
+                                     {course.code?.toUpperCase() === "SPIC1" && (
+                                       <span style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)", padding: "3px 8px", borderRadius: "12px", fontSize: "10px", color: "#ffffff", fontWeight: "bold", boxShadow: "0 0 12px rgba(245, 158, 11, 0.4)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                                         Not Graded
+                                       </span>
+                                     )}
+                                     {loading ? (
+                                       <i className="fas fa-spinner fa-spin mobile-only-score-pill" style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px" }}></i>
+                                     ) : hasTargetMarks ? (
+                                       <span className="mobile-only-score-pill" style={{ 
+                                         fontSize: "10px", 
+                                         fontWeight: "800", 
+                                         color: "#FF80AB", 
+                                         background: "rgba(255, 64, 129, 0.08)",
+                                         border: "1px solid rgba(255, 64, 129, 0.15)",
+                                         padding: "2px 6px",
+                                         borderRadius: "8px",
+                                         whiteSpace: "nowrap"
+                                       }}>
+                                         {totalObtained}/500
+                                       </span>
+                                     ) : null}
+                                   </div>
+                                   <div className="duplicate-tag-container" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                     {course.duplicateType === 'same_grade' && (
+                                       <span className="dup-tag dup-tag-same" style={{ background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255,255,255,0.08)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "var(--text-dim)", fontWeight: 500 }}>
+                                         <i className="fas fa-copy"></i> Duplicate course found
+                                       </span>
+                                     )}
+                                     {course.duplicateType === 'different_grade' && (
+                                       <>
+                                         {course.selectedVersionIndex === 0 ? (
+                                           <span className="dup-tag dup-tag-diff" style={{ background: "rgba(77, 182, 172, 0.08)", border: "1px solid rgba(77, 182, 172, 0.15)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "#4DB6AC", fontWeight: 500 }}>
+                                             <i className="fas fa-check-double"></i> Duplicate found - higher grade selected
+                                           </span>
+                                         ) : (
+                                           <span className="dup-tag dup-tag-diff" style={{ background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.15)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "#f59e0b", fontWeight: 500 }}>
+                                             <i className="fas fa-exclamation-circle"></i> Duplicate found - lower grade selected
+                                           </span>
+                                         )}
+                                         {(() => {
+                                           const btnIndex = (course.selectedVersionIndex + 1) % course.allVersions.length;
+                                           const nextBtnVersion = course.allVersions[btnIndex];
+                                           return (
+                                             <button className="switch-grade-btn" 
+                                                     onClick={(e) => { e.stopPropagation(); toggleCourseVersion(course.sno); }} 
+                                                     style={{ cursor: "pointer", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)", padding: "2px 6px", borderRadius: "6px", fontSize: "9px", color: "white", display: "inline-flex", alignItems: "center", gap: "4px", transition: "all 0.2s", fontWeight: 600, outline: "none", margin: "1px 0" }}>
+                                               <i className="fas fa-exchange-alt"></i> Switch to {nextBtnVersion.grade} ({nextBtnVersion.month_year})
+                                             </button>
+                                           );
+                                         })()}
+                                       </>
+                                     )}
+                                   </div>
+                                 </div>
+                               </td>
+                               <td>
+                                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                   <div style={{
+                                     display: "flex",
+                                     width: "30px",
+                                     height: "30px",
+                                     borderRadius: "50%",
+                                     alignItems: "center",
+                                     justifyContent: "center",
+                                     fontWeight: "800",
+                                     fontSize: "13px",
+                                     color: "white",
+                                     background: badgeBg,
+                                     boxShadow: badgeShadow,
+                                     flexShrink: 0
+                                   }}>
+                                     {course.grade}
+                                   </div>
+                                    {loading ? (
+                                      <i className="fas fa-spinner fa-spin desktop-only-score-pill" style={{ color: "rgba(255,255,255,0.3)", fontSize: "11px" }}></i>
+                                    ) : hasTargetMarks ? (
+                                      <span className="desktop-only-score-pill" style={{ 
+                                        fontSize: "11px", 
+                                        fontWeight: "800", 
+                                        color: "#FF80AB", 
+                                        background: "rgba(255, 64, 129, 0.08)",
+                                        border: "1px solid rgba(255, 64, 129, 0.15)",
+                                        padding: "3px 8px",
+                                        borderRadius: "10px",
+                                        whiteSpace: "nowrap"
+                                      }}>
+                                        {totalObtained}/500
+                                      </span>
+                                    ) : null}
+                                 </div>
+                               </td>
+                               <td style={{ color: "var(--text-dim)" }}>{course.month_year}</td>
+                             </tr>
+                             {isExpanded && (
+                               <tr className="expanded-row-details" style={{ background: "rgba(0, 0, 0, 0.25)" }}>
+                                 <td colSpan={4} style={{ padding: "20px 24px" }} onClick={(e) => e.stopPropagation()}>
+                                   <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "10px" }}>
+                                       <span style={{ fontSize: "12px", fontWeight: "800", color: "#FF80AB", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                                         <i className="fas fa-chart-bar" style={{ marginRight: "6px" }}></i>
+                                         Detailed Score Card
+                                       </span>
+                                       {hasTargetMarks && (
+                                         <span style={{ 
+                                           background: "linear-gradient(135deg, #FF4081, #FF80AB)", 
+                                           padding: "4px 12px", 
+                                           borderRadius: "30px", 
+                                           fontSize: "12px", 
+                                           fontWeight: "800", 
+                                           color: "white",
+                                           boxShadow: "0 4px 12px rgba(255, 64, 129, 0.3)"
+                                         }}>
+                                           Total Obtained: {totalObtained} / 500
+                                         </span>
+                                       )}
+                                     </div>
+
+                                      {loading ? (
+                                        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "15px 0", color: "var(--text-dim)", fontSize: "13px" }}>
+                                          <i className="fas fa-spinner fa-spin"></i>
+                                          <span>Syncing detailed marks splits...</span>
+                                        </div>
+                                      ) : error ? (
+                                        <div style={{ color: "#ef4444", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", padding: "10px 0" }}>
+                                          <i className="fas fa-circle-exclamation"></i>
+                                          <span>{error}</span>
+                                        </div>
+                                      ) : marks && Array.isArray(marks) && marks.length > 0 ? (() => {
+                                          return (
+                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "space-evenly" }}>
+                                              {marks.map((m: any, mIdx: number) => {
+                                                const isPass = m.IsPassed === true || String(m.IsPassed).toLowerCase() === "true" || m.IsPassed === 1 || String(m.IsPassed).toUpperCase() === "PASS";
+                                                const scoreVal = parseFloat(m.OrginalConvertedMark);
+                                                const maxVal = parseFloat(m.RubricsMaxMark) || 100;
+                                                const pct = maxVal > 0 && !isNaN(scoreVal) ? Math.round((scoreVal / maxVal) * 100) : 0;
+                                                const c = isPass ? "#10b981" : "#ef4444";
+                                                const r = 20; const circ = 2 * Math.PI * r; const dash = (pct / 100) * circ;
+                                                const isFA = String(m.Type).toLowerCase().includes('formative');
+
+                                                return (
+                                                  <div key={mIdx} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", minWidth: "68px" }}>
+                                                    <div style={{ position: "relative", width: "50px", height: "50px" }}>
+                                                      <svg width="50" height="50" style={{ transform: "rotate(-90deg)" }}>
+                                                        <circle cx="25" cy="25" r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="5" />
+                                                        <circle cx="25" cy="25" r={r} fill="none" stroke={c} strokeWidth="5" strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" style={{ filter: `drop-shadow(0 0 3px ${c})` }} />
+                                                      </svg>
+                                                      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 800, color: "white" }}>
+                                                        {m.OrginalConvertedMark}
+                                                      </span>
+                                                    </div>
+                                                    <span style={{ fontSize: "10px", fontWeight: 700, color: "rgba(255,255,255,0.7)", textAlign: "center", lineHeight: 1.2 }}>
+                                                      {m.RubricCategory}
+                                                    </span>
+                                                    <span style={{ fontSize: "9px", fontWeight: 800, color: isFA ? "#60a5fa" : "#f59e0b", background: isFA ? "rgba(96,165,250,0.12)" : "rgba(245,158,11,0.12)", padding: "1px 5px", borderRadius: "4px" }}>
+                                                      {isFA ? "FA" : "SA"}
+                                                    </span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          );
+                                        })() : (
+                                         <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "13px", textAlign: "center", padding: "15px 0" }}>
+                                           No rubric/mark split details published for this course.
+                                         </div>
+                                      )}
+                                   </div>
+                                 </td>
+                               </tr>
+                             )}
+                           </Fragment>
                         );
                       })}
                     </tbody>
@@ -949,6 +2246,30 @@ export default function ProfilePage() {
               </button>
 
               <button
+                onClick={handleDownloadHTML}
+                onTouchEnd={(e) => { e.preventDefault(); handleDownloadHTML(); }}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "16px",
+                  color: "white",
+                  fontSize: "15px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  touchAction: "manipulation",
+                  transition: "background 0.2s"
+                }}
+              >
+                <i className="fas fa-file-download" style={{ color: "#4DB6AC" }}></i> Save Offline Report
+              </button>
+
+              <button
                 onClick={handleLogout}
                 disabled={isSyncing}
                 onTouchEnd={(e) => { e.preventDefault(); if (!isSyncing) handleLogout(); }}
@@ -978,6 +2299,32 @@ export default function ProfilePage() {
         </div>,
         document.body
       )}
+
+      {/* PWA bottom install banner */}
+      <div className={`pwa-install-banner ${showInstallBanner ? 'show' : ''}`}>
+        <div className="pwa-install-header">
+          <div className="pwa-install-title">
+            <i className="fas fa-mobile-alt" style={{ color: "#FF4081" }}></i>
+            <span>Install ARMS Connect</span>
+          </div>
+          <button className="pwa-install-close" onClick={handleDismissInstall}>
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
+        <p className="pwa-install-text">
+          Add ARMS Connect to your home screen for a faster, full-screen, native student portal experience!
+        </p>
+        <div className="pwa-install-actions">
+          <button className="btn-install" onClick={handleInstall}>Install App</button>
+          <button className="btn-continue" onClick={handleDismissInstall}>Continue with browser</button>
+        </div>
+      </div>
+
+      {/* Toast Notification */}
+      <div className={`toast-notification ${toastMessage ? 'show' : ''}`}>
+        <i className="fas fa-check-circle" style={{ color: "#4DB6AC" }}></i>
+        <span>{toastMessage}</span>
+      </div>
     </div>
   );
 }

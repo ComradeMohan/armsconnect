@@ -13,7 +13,7 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: var(--font-inter), 'Inter', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 body {
@@ -979,6 +979,17 @@ tr:hover td {
     transition: width 0.3s ease;
 }
 
+/* Terminal loading animations */
+@keyframes terminalFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cursorBlink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+}
+
 /* Responsiveness */
 @media (max-width: 1100px) {
     .dashboard-wrapper {
@@ -1266,10 +1277,16 @@ tr:hover td {
     display: none;
 }
 
-/* Week-based inline alert banners: hidden on desktop, shown only on mobile */
+/* Week-based inline alert banners: shown on both desktop and mobile */
 .today-notification-alert {
-    display: none;
+    display: block;
 }
+
+/* Hide recent notifications panel globally (replaced by stat card popup modal and inline alerts) */
+.notifications-panel {
+    display: none !important;
+}
+
 
 /* Desktop: increase stat card label font size for better visibility */
 @media (min-width: 769px) {
@@ -2097,6 +2114,30 @@ tr:hover td {
         background: rgba(255, 255, 255, 0.1) !important;
         border-radius: 10px !important;
     }
+
+    /* Reset styles for the expanded details row on mobile to prevent overlay */
+    .completed-courses-panel tbody tr.expanded-row-details {
+        display: block !important;
+        position: static !important;
+        padding: 0 !important;
+        background: rgba(0, 0, 0, 0.25) !important;
+        border: none !important;
+        margin: 0 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    
+    .completed-courses-panel tbody tr.expanded-row-details td {
+        position: static !important;
+        display: block !important;
+        width: 100% !important;
+        padding: 16px !important;
+        box-sizing: border-box !important;
+        transform: none !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
 }
 
 /* Global Notifications Popup Modal Styles (Active on both Mobile and Desktop) */
@@ -2251,7 +2292,6 @@ tr:hover td {
     }
 
     .stat-card:active {
-        transform: scale(0.95) !important;
         opacity: 0.85 !important;
     }
 }
@@ -2274,7 +2314,7 @@ tr:hover td {
 }
 
 .glass-panel:active, .course-card:active, .info-item:active {
-    transform: translateY(0px) scale(0.98);
+    /* No active scaling animation */
 }
 
 /* 2. Interactive Icons */
@@ -2301,7 +2341,6 @@ button {
 }
 
 button:active:not(:disabled) {
-    transform: translateY(1px) scale(0.96) !important;
     filter: brightness(0.95);
 }
 
@@ -2604,8 +2643,157 @@ button:active:not(:disabled) {
     }
 }
 
+/* Responsive Score Pills */
+@media (max-width: 768px) {
+    .desktop-only-score-pill {
+        display: none !important;
+    }
+    .mobile-only-score-pill {
+        display: inline-block !important;
+    }
+}
+@media (min-width: 769px) {
+    .desktop-only-score-pill {
+        display: inline-block !important;
+    }
+    .mobile-only-score-pill {
+        display: none !important;
+    }
+}
+/* PWA Install Banner styling */
+.pwa-install-banner {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(150%);
+    width: 90%;
+    max-width: 440px;
+    background: rgba(9, 13, 22, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 64, 129, 0.25);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 25px rgba(255, 64, 129, 0.15);
+    border-radius: 20px;
+    padding: 18px 22px;
+    z-index: 10000;
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
 
+.pwa-install-banner.show {
+    transform: translateX(-50%) translateY(0);
+}
 
+.pwa-install-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 
+.pwa-install-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
 
+.pwa-install-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+}
 
+.pwa-install-close:hover {
+    color: #fff;
+}
+
+.pwa-install-text {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+}
+
+.pwa-install-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 4px;
+}
+
+.btn-install {
+    flex: 1;
+    background: linear-gradient(135deg, #FF80AB, #FF4081);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 11px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(255, 64, 129, 0.3);
+    transition: opacity 0.2s;
+}
+
+.btn-install:hover {
+    opacity: 0.9;
+}
+
+.btn-continue {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 11px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.btn-continue:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+}
+
+/* Toast Notification styling */
+.toast-notification {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-100px);
+    background: rgba(9, 13, 22, 0.9);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid rgba(77, 182, 172, 0.3);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(77, 182, 172, 0.15);
+    border-radius: 14px;
+    padding: 12px 24px;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    opacity: 0;
+    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+    pointer-events: none;
+}
+
+.toast-notification.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -11,21 +11,18 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStatus, setLoadingStatus] = useState("Connecting to ARMS...");
   const [progress, setProgress] = useState(0);
+  const [terminalLines, setTerminalLines] = useState<string[]>([]);
   const [keepMeLoggedIn, setKeepMeLoggedIn] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
+  const terminalRef = useRef<HTMLDivElement>(null);
 
-
-
-  const steps = [
-    "Connecting to ARMS...",
-    "Authenticating credentials...",
-    "Fetching student profile...",
-    "Syncing attendance data...",
-    "Retrieving latest grades...",
-    "Finalizing dashboard..."
-  ];
+  // Auto-scroll terminal to bottom
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [terminalLines]);
 
   // Auto-redirect if already logged in
   useEffect(() => {
@@ -33,79 +30,86 @@ export default function LoginPage() {
       let stored = sessionStorage.getItem("profile");
       if (!stored) {
         stored = localStorage.getItem("profile");
-        if (stored) {
-          sessionStorage.setItem("profile", stored);
-        }
+        if (stored) sessionStorage.setItem("profile", stored);
       }
-      if (stored) {
-        router.push("/profile");
-      }
+      if (stored) router.push("/profile");
     }
   }, [router]);
 
+  const addLine = (line: string) => {
+    setTerminalLines(prev => [...prev, line]);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!acceptTerms) {
       setError("Please accept the Terms and Conditions to continue.");
       return;
     }
-    
+
     setError("");
     setIsLoading(true);
     setProgress(0);
-    setLoadingStatus(steps[0]);
-
-    // Animate loader
-    let progressVal = 0;
-    let stepIdx = 0;
-    const interval = setInterval(() => {
-      progressVal = Math.min(progressVal + 1.5, 98);
-      setProgress(progressVal);
-
-      const targetStepIdx = Math.min(Math.floor(progressVal / 16), steps.length - 1);
-      if (targetStepIdx !== stepIdx) {
-        stepIdx = targetStepIdx;
-        setLoadingStatus(steps[stepIdx]);
-      }
-    }, 150);
+    setTerminalLines([]);
 
     try {
-      const res = await fetch("/api/profile", {
+      const res = await fetch("/api/profile/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password })
       });
-      
-      const data = await res.json();
 
-      clearInterval(interval);
+      if (!res.body) throw new Error("No stream body");
 
-      if (res.status === 200) {
-        setProgress(100);
-        setLoadingStatus("Redirecting...");
-        sessionStorage.setItem("profile", JSON.stringify(data));
-        if (keepMeLoggedIn) {
-          localStorage.setItem("profile", JSON.stringify(data));
-          localStorage.setItem("saved_username", username);
-          localStorage.setItem("saved_password", password);
-        } else {
-          localStorage.removeItem("profile");
-          localStorage.removeItem("saved_username");
-          localStorage.removeItem("saved_password");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const chunk of lines) {
+          const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
+          if (!dataLine) continue;
+          try {
+            const json = JSON.parse(dataLine.slice(5).trim());
+
+            if (json.type === "step") {
+              addLine(json.message);
+              setProgress(json.progress);
+            } else if (json.type === "error") {
+              addLine(json.message);
+              setIsLoading(false);
+              setError(json.message.replace(/^❌\s*/, ""));
+              return;
+            } else if (json.type === "done" && json.payload) {
+              setProgress(100);
+              addLine("🚀 Redirecting to dashboard...");
+              sessionStorage.setItem("profile", JSON.stringify(json.payload));
+              if (keepMeLoggedIn) {
+                localStorage.setItem("profile", JSON.stringify(json.payload));
+                localStorage.setItem("saved_username", username);
+                localStorage.setItem("saved_password", password);
+              } else {
+                localStorage.removeItem("profile");
+                localStorage.removeItem("saved_username");
+                localStorage.removeItem("saved_password");
+              }
+              setTimeout(() => { window.location.href = "/profile"; }, 700);
+              return;
+            }
+          } catch {}
         }
-        setTimeout(() => {
-          window.location.href = "/profile";
-        }, 500);
-      } else {
-        setIsLoading(false);
-        setError(data.error || "Login failed. Please check credentials.");
       }
     } catch (err: any) {
-      clearInterval(interval);
       setIsLoading(false);
       setError("Unable to connect to the server.");
-      console.error(err);
     }
   };
 
@@ -360,16 +364,112 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Loading Overlay */}
+      {/* Loading Overlay — Terminal Style */}
       <div className={`loading-overlay ${isLoading ? "active" : ""}`}>
-        <div className="loading-content">
-          <div className="spinner"></div>
-          <div className="loading-status">{loadingStatus}</div>
-          <div className="progress-container">
-            <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+        <div className="loading-content" style={{ width: "100%", maxWidth: "520px", padding: "0 20px" }}>
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+            <div style={{
+              background: "linear-gradient(135deg, #FF4081, #FF80AB)",
+              width: "40px", height: "40px", borderRadius: "12px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 6px 18px rgba(255,64,129,0.45)",
+              flexShrink: 0
+            }}>
+              <i className="fas fa-layer-group" style={{ color: "white", fontSize: "18px" }}></i>
+            </div>
+            <div>
+              <div style={{ fontSize: "18px", fontWeight: 800, color: "#fff", letterSpacing: "-0.3px" }}>ARMSConnect</div>
+              <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.45)", marginTop: "1px" }}>Syncing your academic data...</div>
+            </div>
           </div>
-          <p style={{ marginTop: "20px", color: "var(--text-dim)", fontSize: "14px" }}>
-            This might take up to 20 seconds as we securely sync your data.
+
+          {/* Terminal Box */}
+          <div ref={terminalRef} style={{
+            background: "rgba(0,0,0,0.55)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "14px",
+            padding: "16px 18px",
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace",
+            fontSize: "13px",
+            lineHeight: "1.8",
+            minHeight: "180px",
+            maxHeight: "260px",
+            overflowY: "auto",
+            backdropFilter: "blur(10px)",
+            scrollBehavior: "smooth",
+          }}>
+            {/* Terminal top bar */}
+            <div style={{ display: "flex", gap: "6px", marginBottom: "12px", opacity: 0.6 }}>
+              <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#ff5f56" }}></div>
+              <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#ffbd2e" }}></div>
+              <div style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#27c93f" }}></div>
+              <span style={{ marginLeft: "8px", fontSize: "11px", color: "rgba(255,255,255,0.35)", letterSpacing: "0.5px" }}>arms-connect ~ login</span>
+            </div>
+
+            {terminalLines.length === 0 && (
+              <div style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>Initializing...</div>
+            )}
+
+            {terminalLines.map((line, i) => {
+              const isError = line.startsWith("❌");
+              const isDone = line.startsWith("✅") || line.startsWith("🚀");
+              const isInfo = line.startsWith("📊") || line.startsWith("👤");
+              return (
+                <div key={i} style={{
+                  color: isError ? "#ff6b6b" : isDone ? "#4ade80" : isInfo ? "#60a5fa" : "rgba(255,255,255,0.82)",
+                  animation: "terminalFadeIn 0.25s ease",
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "flex-start"
+                }}>
+                  <span style={{ color: "#FF80AB", userSelect: "none", flexShrink: 0 }}>›</span>
+                  <span>{line}</span>
+                </div>
+              );
+            })}
+
+            {/* Blinking cursor */}
+            {isLoading && progress < 100 && (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "2px" }}>
+                <span style={{ color: "#FF80AB", userSelect: "none" }}>›</span>
+                <span style={{
+                  display: "inline-block",
+                  width: "8px", height: "15px",
+                  background: "#FF80AB",
+                  animation: "cursorBlink 1s step-end infinite",
+                  borderRadius: "2px",
+                  opacity: 0.9
+                }}></span>
+              </div>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ marginTop: "18px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)" }}>Progress</span>
+              <span style={{ fontSize: "12px", color: "#FF80AB", fontWeight: 700 }}>{Math.round(progress)}%</span>
+            </div>
+            <div style={{
+              background: "rgba(255,255,255,0.08)",
+              borderRadius: "99px",
+              height: "6px",
+              overflow: "hidden"
+            }}>
+              <div style={{
+                width: `${progress}%`,
+                height: "100%",
+                background: "linear-gradient(90deg, #FF4081, #FF80AB)",
+                borderRadius: "99px",
+                transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+                boxShadow: "0 0 10px rgba(255,64,129,0.5)"
+              }}></div>
+            </div>
+          </div>
+
+          <p style={{ marginTop: "14px", color: "rgba(255,255,255,0.3)", fontSize: "12px", textAlign: "center" }}>
+            This may take up to 20 seconds — securely syncing your data
           </p>
         </div>
       </div>
