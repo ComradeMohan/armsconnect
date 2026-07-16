@@ -139,6 +139,10 @@ export default function ProfilePage() {
           })
         });
 
+        if (res.status !== 200) {
+          throw new Error(`Server returned status ${res.status}`);
+        }
+
         if (!res.body) throw new Error("No stream body");
 
         const reader = res.body.getReader();
@@ -1666,9 +1670,35 @@ export default function ProfilePage() {
                                     <span>Syncing detailed marks splits...</span>
                                   </div>
                                 ) : error ? (
-                                  <div style={{ color: "#ef4444", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", padding: "10px 0" }}>
-                                    <i className="fas fa-circle-exclamation"></i>
-                                    <span>{error}</span>
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", flexWrap: "wrap", gap: "10px", width: "100%" }}>
+                                    <div style={{ color: "#ef4444", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                      <i className="fas fa-circle-exclamation"></i>
+                                      <span>{error}</span>
+                                    </div>
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        loadMarksForCourse(course);
+                                      }}
+                                      style={{
+                                        background: "rgba(239, 68, 68, 0.12)",
+                                        border: "1px solid rgba(239, 68, 68, 0.25)",
+                                        borderRadius: "8px",
+                                        color: "#ef4444",
+                                        padding: "6px 12px",
+                                        fontSize: "11px",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "6px",
+                                        transition: "background 0.2s"
+                                      }}
+                                      onMouseOver={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.2)"}
+                                      onMouseOut={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)"}
+                                    >
+                                      <i className="fas fa-redo-alt"></i> Retry
+                                    </button>
                                   </div>
                                 ) : marks && Array.isArray(marks) && marks.length > 0 ? (
                                   <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1960,9 +1990,35 @@ export default function ProfilePage() {
                                           <span>Syncing detailed marks splits...</span>
                                         </div>
                                       ) : error ? (
-                                        <div style={{ color: "#ef4444", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", padding: "10px 0" }}>
-                                          <i className="fas fa-circle-exclamation"></i>
-                                          <span>{error}</span>
+                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", flexWrap: "wrap", gap: "10px", width: "100%" }}>
+                                          <div style={{ color: "#ef4444", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                            <i className="fas fa-circle-exclamation"></i>
+                                            <span>{error}</span>
+                                          </div>
+                                          <button 
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              loadMarksForCourse(course);
+                                            }}
+                                            style={{
+                                              background: "rgba(239, 68, 68, 0.12)",
+                                              border: "1px solid rgba(239, 68, 68, 0.25)",
+                                              borderRadius: "8px",
+                                              color: "#ef4444",
+                                              padding: "6px 12px",
+                                              fontSize: "11px",
+                                              fontWeight: 600,
+                                              cursor: "pointer",
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              gap: "6px",
+                                              transition: "background 0.2s"
+                                            }}
+                                            onMouseOver={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.2)"}
+                                            onMouseOut={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)"}
+                                          >
+                                            <i className="fas fa-redo-alt"></i> Retry
+                                          </button>
                                         </div>
                                       ) : marks && Array.isArray(marks) && marks.length > 0 ? (() => {
                                           return (

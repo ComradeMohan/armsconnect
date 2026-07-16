@@ -172,25 +172,35 @@ export async function POST(request: Request) {
 
       const stream = new ReadableStream({
         async start(controller) {
-          // Fire all course requests in parallel (matches Python asyncio.gather speed)
-          const promises = body.courses.map(async (c: any) => {
-            try {
-              const marks = await resolveCourse(client, username, c.courseCode, c.monthYear);
-              if (isClosed) return;
-              const data = JSON.stringify({ sno: c.sno, marks, error: null });
-              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-            } catch (err: any) {
-              console.warn(`[MarksAPI] Bulk error for course ${c.courseCode}:`, err.message);
-              if (isClosed) return;
-              const data = JSON.stringify({ sno: c.sno, marks: null, error: err.message || 'Failed' });
-              try {
-                controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-              } catch (e) {}
-            }
-          });
+          const concurrency = 8; // Fetch 8 courses in parallel at a time to prevent server overloading
+          const batches: any[][] = [];
+          
+          for (let i = 0; i < body.courses.length; i += concurrency) {
+            batches.push(body.courses.slice(i, i + concurrency));
+          }
 
-          // Wait for all parallel fetches to finish
-          await Promise.all(promises);
+          for (const batch of batches) {
+            if (isClosed) break;
+            
+            const promises = batch.map(async (c: any) => {
+              try {
+                const marks = await resolveCourse(client, username, c.courseCode, c.monthYear);
+                if (isClosed) return;
+                const data = JSON.stringify({ sno: c.sno, marks, error: null });
+                controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+              } catch (err: any) {
+                console.warn(`[MarksAPI] Bulk error for course ${c.courseCode}:`, err.message);
+                if (isClosed) return;
+                const data = JSON.stringify({ sno: c.sno, marks: null, error: err.message || 'Failed' });
+                try {
+                  controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+                } catch (e) {}
+              }
+            });
+
+            // Wait for the current batch of 8 to complete before starting the next
+            await Promise.all(promises);
+          }
 
           if (!isClosed) {
             try {
