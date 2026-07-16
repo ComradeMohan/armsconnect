@@ -113,6 +113,39 @@ export default function ProfilePage() {
 
       if (coursesToFetch.length === 0) return;
 
+      // Group courses by month_year (session) to prevent timeouts and optimize Vercel execution
+      const rawGroups: { [monthYear: string]: any[] } = {};
+      coursesToFetch.forEach(c => {
+        if (!rawGroups[c.month_year]) {
+          rawGroups[c.month_year] = [];
+        }
+        rawGroups[c.month_year].push(c);
+      });
+
+      const largeSessionGroups: any[][] = [];
+      let smallSessionCourses: any[] = [];
+
+      // If a session has 3 or more courses, send it independently.
+      // Otherwise, collect small sessions to group them together.
+      Object.keys(rawGroups).forEach(monthYear => {
+        const sessionCourses = rawGroups[monthYear];
+        if (sessionCourses.length >= 3) {
+          largeSessionGroups.push(sessionCourses);
+        } else {
+          smallSessionCourses.push(...sessionCourses);
+        }
+      });
+
+      // Chunk the collected small sessions' courses into groups of 6
+      const smallSessionBatches: any[][] = [];
+      const batchSize = 6;
+      for (let i = 0; i < smallSessionCourses.length; i += batchSize) {
+        smallSessionBatches.push(smallSessionCourses.slice(i, i + batchSize));
+      }
+
+      // Combine large session groups and chunked small batches
+      const finalBatches: any[][] = [...largeSessionGroups, ...smallSessionBatches];
+
       // Set loading: true for all courses to show they are in progress
       setCourseMarks(prev => {
         const next = { ...prev };
@@ -122,78 +155,88 @@ export default function ProfilePage() {
         return next;
       });
 
-      try {
-        const res = await fetch("/api/profile/marks", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            username: profile.regno,
-            sessionId: profile.sessionId,
-            courses: coursesToFetch.map(c => ({
-              sno: c.sno,
-              courseCode: c.code,
-              monthYear: c.month_year
-            }))
-          })
-        });
+      // Fetch marks for each batch group concurrently
+      const fetchPromises = finalBatches.map(async (batchCourses) => {
+        // Label the request based on whether it is a single session or a mixed small batch
+        const batchLabel = batchCourses.every(c => c.month_year === batchCourses[0].month_year)
+          ? batchCourses[0].month_year
+          : "Mixed Semesters";
 
-        if (res.status !== 200) {
-          throw new Error(`Server returned status ${res.status}`);
-        }
+        try {
+          const res = await fetch("/api/profile/marks", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              username: profile.regno,
+              sessionId: profile.sessionId,
+              courses: batchCourses.map(c => ({
+                sno: c.sno,
+                courseCode: c.code,
+                monthYear: c.month_year
+              }))
+            })
+          });
 
-        if (!res.body) throw new Error("No stream body");
+          if (res.status !== 200) {
+            throw new Error(`Server returned status ${res.status}`);
+          }
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
+          if (!res.body) throw new Error("No stream body");
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
 
-          buffer += decoder.decode(value, { stream: true });
-          
-          // Normalize line endings to \n and split by double newline
-          const normalized = buffer.replace(/\r\n/g, "\n");
-          const lines = normalized.split("\n\n");
-          buffer = lines.pop() || "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          for (const chunk of lines) {
-            // Find all lines starting with data: in the chunk
-            const dataLines = chunk.split("\n").filter(l => l.startsWith("data:"));
-            for (const dataLine of dataLines) {
-              try {
-                const json = JSON.parse(dataLine.slice(5).trim());
-                if (json.sno) {
-                  setCourseMarks(prev => ({
-                    ...prev,
-                    [json.sno]: {
-                      loading: false,
-                      marks: json.marks,
-                      error: json.error
-                    }
-                  }));
+            buffer += decoder.decode(value, { stream: true });
+            
+            // Normalize line endings to \n and split by double newline
+            const normalized = buffer.replace(/\r\n/g, "\n");
+            const lines = normalized.split("\n\n");
+            buffer = lines.pop() || "";
+
+            for (const chunk of lines) {
+              // Find all lines starting with data: in the chunk
+              const dataLines = chunk.split("\n").filter(l => l.startsWith("data:"));
+              for (const dataLine of dataLines) {
+                try {
+                  const json = JSON.parse(dataLine.slice(5).trim());
+                  if (json.sno) {
+                    setCourseMarks(prev => ({
+                      ...prev,
+                      [json.sno]: {
+                        loading: false,
+                        marks: json.marks,
+                        error: json.error
+                      }
+                    }));
+                  }
+                } catch (e) {
+                  console.error("Failed to parse stream chunk:", e);
                 }
-              } catch (e) {
-                console.error("Failed to parse stream chunk:", e);
               }
             }
           }
-        }
-      } catch (err: any) {
-        console.error("Progressive marks load error:", err);
-        setCourseMarks(prev => {
-          const next = { ...prev };
-          coursesToFetch.forEach(c => {
-            if (next[c.sno]?.loading) {
-              next[c.sno] = { loading: false, marks: null, error: err.message || "Failed to load marks" };
-            }
+        } catch (err: any) {
+          console.error(`Progressive marks load error for batch (${batchLabel}):`, err);
+          setCourseMarks(prev => {
+            const next = { ...prev };
+            batchCourses.forEach(c => {
+              if (next[c.sno]?.loading) {
+                next[c.sno] = { loading: false, marks: null, error: err.message || "Failed to load marks" };
+              }
+            });
+            return next;
           });
-          return next;
-        });
-      }
+        }
+      });
+
+      await Promise.all(fetchPromises);
 
       setToastMessage("All marks fetched successfully!");
       setTimeout(() => {
