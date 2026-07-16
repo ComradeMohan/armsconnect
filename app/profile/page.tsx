@@ -145,6 +145,7 @@ export default function ProfilePage() {
 
       // Combine large session groups and chunked small batches
       const finalBatches: any[][] = [...largeSessionGroups, ...smallSessionBatches];
+      const failedSnos = new Set<string>();
 
       // Set loading: true for all courses to show they are in progress
       setCourseMarks(prev => {
@@ -207,6 +208,9 @@ export default function ProfilePage() {
                 try {
                   const json = JSON.parse(dataLine.slice(5).trim());
                   if (json.sno) {
+                    if (json.error) {
+                      failedSnos.add(json.sno);
+                    }
                     setCourseMarks(prev => ({
                       ...prev,
                       [json.sno]: {
@@ -224,6 +228,9 @@ export default function ProfilePage() {
           }
         } catch (err: any) {
           console.error(`Progressive marks load error for batch (${batchLabel}):`, err);
+          batchCourses.forEach(c => {
+            failedSnos.add(c.sno);
+          });
           setCourseMarks(prev => {
             const next = { ...prev };
             batchCourses.forEach(c => {
@@ -238,10 +245,14 @@ export default function ProfilePage() {
 
       await Promise.all(fetchPromises);
 
-      setToastMessage("All marks fetched successfully!");
+      if (failedSnos.size > 0) {
+        setToastMessage(`Fetched marks. ${failedSnos.size} courses failed to load (tap to retry).`);
+      } else {
+        setToastMessage("All marks fetched successfully!");
+      }
       setTimeout(() => {
         setToastMessage(null);
-      }, 3500);
+      }, 5000);
     };
 
     loadAllProgressively();
