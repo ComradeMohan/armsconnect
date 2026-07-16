@@ -4,7 +4,16 @@ import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import * as cheerio from 'cheerio';
 
+// Vercel: extend function timeout to 60s (default is 10s on Hobby plan).
+// Login + scraping all ARMS data can take up to 10s total.
+export const maxDuration = 60;
+
 const ARMS_BASE_URL = (process.env.ARMS_BASE_URL || 'https://arms.sse.saveetha.com').replace(/\/+$/, '');
+
+// Set once at module level — prevents repeated TLS warnings on every request.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
 
 function parseMonthYear(my: string): Date {
   const parts = my.split('-');
@@ -36,8 +45,6 @@ export async function POST(request: Request) {
       };
 
       try {
-        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
         const jar = new CookieJar();
         const client = wrapper(axios.create({
           jar,
@@ -273,6 +280,19 @@ export async function POST(request: Request) {
         // Done — send the full profile payload
         send('step', '✅ All data synced! Launching dashboard...', 98);
         send('done', 'done', 100, profileData);
+
+        // Terminal summary — visible in local dev and Vercel function logs
+        console.log('[Stream] Profile fetched:', JSON.stringify({
+          name: profileData.name,
+          regno: profileData.regno,
+          program: profileData.program,
+          cgpa: profileData.cgpa,
+          courses: profileData.courses?.length ?? 0,
+          arrears: profileData.failedCourses?.length ?? 0,
+          attendance: profileData.attendance?.length ?? 0,
+          notifications: profileData.notifications?.length ?? 0,
+          sessionId: profileData.sessionId ? `${profileData.sessionId.slice(0, 6)}…` : 'none'
+        }, null, 2));
 
       } catch (err: any) {
         send('error', `❌ Error: ${err.message || 'Something went wrong'}`, 0);

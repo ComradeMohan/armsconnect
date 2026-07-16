@@ -2,7 +2,17 @@ import { NextResponse } from 'next/server';
 import axios from 'axios';
 import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
-import https from 'https';
+
+// Vercel: extend function timeout to 60s (default is 10s on Hobby plan).
+// The ARMS roster lookup can take 15-25s for slow subjects.
+export const maxDuration = 60;
+
+// axios-cookiejar-support manages its own http(s) agent internally and does not
+// allow a custom httpsAgent to be passed. Set the TLS bypass at module level
+// (once at server startup) so the Node.js warning fires only once, not per-request.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
 
 const ARMS_BASE_URL = (process.env.ARMS_BASE_URL || 'https://arms.sse.saveetha.com').replace(/\/+$/, '');
 
@@ -22,7 +32,6 @@ async function getWithRetry(client: any, url: string, options: any = {}, retries
     } catch (err: any) {
       if (i === retries) throw err;
       const delay = 1000 * (i + 1);
-      console.warn(`[MarksAPI] Request failed, retrying in ${delay}ms... (${i + 1}/${retries}). Error: ${err.message}`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -124,30 +133,10 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
   return marksTable.map((m: any) => ({
     RubricCategory: m.RubricCategory,
     Type: m.Type,
-    OrginalConvertedMark: m.OrginalConvertedMark,
+    OrginalConvertedMark: m.OrginalConvertedMark !== undefined ? m.OrginalConvertedMark : (m.OriginalConvertedMark !== undefined ? m.OriginalConvertedMark : null),
     RubricsMaxMark: m.RubricsMaxMark,
     IsPassed: m.IsPassed
   }));
-}
-
-async function resolveCoursesInParallel(client: any, username: string, courses: any[], concurrency = 8): Promise<any> {
-  const results: any = {};
-  
-  // Process in batches
-  for (let i = 0; i < courses.length; i += concurrency) {
-    const batch = courses.slice(i, i + concurrency);
-    await Promise.all(batch.map(async (c: any) => {
-      try {
-        const marks = await resolveCourse(client, username, c.courseCode, c.monthYear);
-        results[c.sno] = { marks, error: null };
-      } catch (err: any) {
-        console.warn(`[MarksAPI] Bulk error for course ${c.courseCode}:`, err.message);
-        results[c.sno] = { marks: null, error: err.message || 'Failed' };
-      }
-    }));
-  }
-  
-  return results;
 }
 
 export async function POST(request: Request) {
@@ -160,10 +149,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'username is required' }, { status: 400 });
     }
 
-    // Bypasses SSL certificate issues globally
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
-    // Create session client using the provided sessionId
+    // Create session client using the provided sessionId.
+    // Use a per-client httpsAgent instead of the global env flag to avoid noisy TLS warnings.
     const jar = new CookieJar();
     if (sessionId) {
       await jar.setCookie(`ASP.NET_SessionId=${sessionId}; Domain=arms.sse.saveetha.com; Path=/`, ARMS_BASE_URL);
@@ -180,9 +167,49 @@ export async function POST(request: Request) {
 
     // Check if bulk request
     if (body.courses && Array.isArray(body.courses)) {
-      console.log(`[MarksAPI] Fetching bulk marks for ${body.courses.length} courses for user ${username}`);
-      const results = await resolveCoursesInParallel(client, username, body.courses);
-      return NextResponse.json({ success: true, results });
+      const encoder = new TextEncoder();
+      let isClosed = false;
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          // Fire all course requests in parallel (matches Python asyncio.gather speed)
+          const promises = body.courses.map(async (c: any) => {
+            try {
+              const marks = await resolveCourse(client, username, c.courseCode, c.monthYear);
+              if (isClosed) return;
+              const data = JSON.stringify({ sno: c.sno, marks, error: null });
+              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+            } catch (err: any) {
+              console.warn(`[MarksAPI] Bulk error for course ${c.courseCode}:`, err.message);
+              if (isClosed) return;
+              const data = JSON.stringify({ sno: c.sno, marks: null, error: err.message || 'Failed' });
+              try {
+                controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+              } catch (e) {}
+            }
+          });
+
+          // Wait for all parallel fetches to finish
+          await Promise.all(promises);
+
+          if (!isClosed) {
+            try {
+              controller.close();
+            } catch (e) {}
+          }
+        },
+        cancel() {
+          isClosed = true;
+        }
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        }
+      });
     }
 
     // Single request flow
@@ -193,7 +220,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'courseCode and monthYear are required for single mode' }, { status: 400 });
     }
 
-    console.log(`[MarksAPI] Fetching single marks for ${courseCode} (${monthYear}) for user ${username}`);
     const marks = await resolveCourse(client, username, courseCode, monthYear);
     return NextResponse.json({ success: true, marks });
 

@@ -18,33 +18,15 @@ export default function ProfilePage() {
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [expandedCourseSno, setExpandedCourseSno] = useState<string | null>(null);
+  // courseMarks is intentionally empty at init — user-scoped marks are loaded
+  // inside the profile useEffect after we know the regno.
   const [courseMarks, setCourseMarks] = useState<{
     [sno: string]: {
       loading: boolean;
       marks: any[] | null;
       error: string | null;
     }
-  }>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("saveetha_course_marks");
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          const clean: any = {};
-          for (const key of Object.keys(parsed)) {
-            clean[key] = {
-              ...parsed[key],
-              loading: false
-            };
-          }
-          return clean;
-        }
-      } catch (e) {
-        console.warn("Failed to load course marks from localStorage:", e);
-      }
-    }
-    return {};
-  });
+  }>({});
 
   const parseMonthYearString = (my: string): Date => {
     const parts = my.split('-');
@@ -115,8 +97,15 @@ export default function ProfilePage() {
 
     const allCourses = [...(profile.courses || []), ...(profile.failedCourses || [])];
 
-
     const loadAllProgressively = async () => {
+      // Avoid auto-fetching on mount if we already have marks loaded from cache.
+      // This preserves permanently saved data and prevents dead session timeouts.
+      const cachedKeys = Object.keys(courseMarks);
+      const hasAnyCachedMarks = cachedKeys.some(key => courseMarks[key]?.marks);
+      if (hasAnyCachedMarks) {
+        return;
+      }
+
       const coursesToFetch = allCourses.filter(c => {
         const cached = courseMarks[c.sno];
         return !cached || (!cached.marks && !cached.error);
@@ -124,6 +113,7 @@ export default function ProfilePage() {
 
       if (coursesToFetch.length === 0) return;
 
+      // Set loading: true for all courses to show they are in progress
       setCourseMarks(prev => {
         const next = { ...prev };
         coursesToFetch.forEach(c => {
@@ -132,79 +122,79 @@ export default function ProfilePage() {
         return next;
       });
 
-      const batchSize = 6;
-      const batches: any[][] = [];
-      for (let i = 0; i < coursesToFetch.length; i += batchSize) {
-        batches.push(coursesToFetch.slice(i, i + batchSize));
-      }
+      try {
+        const res = await fetch("/api/profile/marks", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            username: profile.regno,
+            sessionId: profile.sessionId,
+            courses: coursesToFetch.map(c => ({
+              sno: c.sno,
+              courseCode: c.code,
+              monthYear: c.month_year
+            }))
+          })
+        });
 
-      let completedCount = 0;
+        if (!res.body) throw new Error("No stream body");
 
-      const fetchPromises = batches.map(async (batch) => {
-        try {
-          const res = await fetch("/api/profile/marks", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              username: profile.regno,
-              sessionId: profile.sessionId,
-              courses: batch.map(c => ({
-                sno: c.sno,
-                courseCode: c.code,
-                monthYear: c.month_year
-              }))
-            })
-          });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-          const data = await res.json();
-          if (data.success && data.results) {
-            setCourseMarks(prev => {
-              const next = { ...prev };
-              for (const sno of Object.keys(data.results)) {
-                next[sno] = {
-                  loading: false,
-                  marks: data.results[sno].marks,
-                  error: data.results[sno].error
-                };
-              }
-              return next;
-            });
-          } else {
-            setCourseMarks(prev => {
-              const next = { ...prev };
-              batch.forEach(c => {
-                if (next[c.sno]?.loading) {
-                  next[c.sno] = { loading: false, marks: null, error: data.error || 'Failed' };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Normalize line endings to \n and split by double newline
+          const normalized = buffer.replace(/\r\n/g, "\n");
+          const lines = normalized.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const chunk of lines) {
+            // Find all lines starting with data: in the chunk
+            const dataLines = chunk.split("\n").filter(l => l.startsWith("data:"));
+            for (const dataLine of dataLines) {
+              try {
+                const json = JSON.parse(dataLine.slice(5).trim());
+                if (json.sno) {
+                  setCourseMarks(prev => ({
+                    ...prev,
+                    [json.sno]: {
+                      loading: false,
+                      marks: json.marks,
+                      error: json.error
+                    }
+                  }));
                 }
-              });
-              return next;
-            });
-          }
-        } catch (e: any) {
-          console.error("Batch marks query error:", e);
-          setCourseMarks(prev => {
-            const next = { ...prev };
-            batch.forEach(c => {
-              if (next[c.sno]?.loading) {
-                next[c.sno] = { loading: false, marks: null, error: e.message || 'Failed' };
+              } catch (e) {
+                console.error("Failed to parse stream chunk:", e);
               }
-            });
-            return next;
-          });
-        } finally {
-          completedCount += batch.length;
-          if (completedCount >= coursesToFetch.length) {
-            setToastMessage("All marks fetched successfully!");
-            setTimeout(() => {
-              setToastMessage(null);
-            }, 3500);
+            }
           }
         }
-      });
+      } catch (err: any) {
+        console.error("Progressive marks load error:", err);
+        setCourseMarks(prev => {
+          const next = { ...prev };
+          coursesToFetch.forEach(c => {
+            if (next[c.sno]?.loading) {
+              next[c.sno] = { loading: false, marks: null, error: err.message || "Failed to load marks" };
+            }
+          });
+          return next;
+        });
+      }
 
-      await Promise.all(fetchPromises);
+      setToastMessage("All marks fetched successfully!");
+      setTimeout(() => {
+        setToastMessage(null);
+      }, 3500);
     };
 
     loadAllProgressively();
@@ -267,8 +257,9 @@ export default function ProfilePage() {
     }
   }, [profile, courseMarks]);
 
+  // Persist marks to a user-scoped key so different accounts never share cached marks.
   useEffect(() => {
-    if (typeof window !== "undefined" && Object.keys(courseMarks).length > 0) {
+    if (typeof window !== "undefined" && profile?.regno && Object.keys(courseMarks).length > 0) {
       try {
         const toSave: any = {};
         for (const key of Object.keys(courseMarks)) {
@@ -277,13 +268,13 @@ export default function ProfilePage() {
           }
         }
         if (Object.keys(toSave).length > 0) {
-          localStorage.setItem("saveetha_course_marks", JSON.stringify(toSave));
+          localStorage.setItem(`saveetha_course_marks_${profile.regno}`, JSON.stringify(toSave));
         }
       } catch (e) {
         console.warn("Failed to save course marks to localStorage:", e);
       }
     }
-  }, [courseMarks]);
+  }, [courseMarks, profile?.regno]);
 
   // Loading timeout detection
   useEffect(() => {
@@ -320,7 +311,25 @@ export default function ProfilePage() {
       if (!stored) {
         router.push("/");
       } else {
-        setProfile(JSON.parse(stored));
+        const parsedProfile = JSON.parse(stored);
+        setProfile(parsedProfile);
+
+        // Load marks scoped to THIS user only — prevents cross-account contamination.
+        // Old unscoped key (saveetha_course_marks) is intentionally ignored.
+        try {
+          const marksKey = `saveetha_course_marks_${parsedProfile.regno}`;
+          const savedMarks = localStorage.getItem(marksKey);
+          if (savedMarks) {
+            const parsed = JSON.parse(savedMarks);
+            const clean: any = {};
+            for (const key of Object.keys(parsed)) {
+              clean[key] = { ...parsed[key], loading: false };
+            }
+            setCourseMarks(clean);
+          }
+        } catch (e) {
+          console.warn("Failed to load cached course marks:", e);
+        }
       }
     }
   }, [router]);
@@ -871,10 +880,16 @@ export default function ProfilePage() {
   };
 
   const handleLogout = () => {
+    const regno = profile?.regno;
     sessionStorage.removeItem("profile");
     localStorage.removeItem("profile");
     localStorage.removeItem("saved_username");
     localStorage.removeItem("saved_password");
+    // Remove user-scoped marks for this account
+    if (regno) {
+      localStorage.removeItem(`saveetha_course_marks_${regno}`);
+    }
+    // Also clean up any legacy unscoped key left from older versions
     localStorage.removeItem("saveetha_course_marks");
     router.push("/");
   };
@@ -895,6 +910,13 @@ export default function ProfilePage() {
     
     setIsSyncing(true);
     try {
+      // Clear user-scoped course marks from localStorage so they are re-fetched fresh on sync/reload
+      if (profile?.regno) {
+        localStorage.removeItem(`saveetha_course_marks_${profile.regno}`);
+      }
+      // Also clear legacy cache
+      localStorage.removeItem("saveetha_course_marks");
+
       const res = await fetch("/api/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1724,9 +1746,9 @@ export default function ProfilePage() {
                             {sortConfig?.key === 'code' ? (sortConfig.direction === 'asc' ? <i className="fas fa-sort-up"></i> : <i className="fas fa-sort-down"></i>) : <i className="fas fa-sort" style={{ opacity: 0.3 }}></i>}
                           </span>
                         </th>
-                        <th onClick={() => handleSort('course')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                        <th onClick={() => handleSort('name')} style={{ cursor: 'pointer', userSelect: 'none' }}>
                           Course <span style={{ marginLeft: "4px" }}>
-                            {sortConfig?.key === 'course' ? (sortConfig.direction === 'asc' ? <i className="fas fa-sort-up"></i> : <i className="fas fa-sort-down"></i>) : <i className="fas fa-sort" style={{ opacity: 0.3 }}></i>}
+                            {sortConfig?.key === 'name' ? (sortConfig.direction === 'asc' ? <i className="fas fa-sort-up"></i> : <i className="fas fa-sort-down"></i>) : <i className="fas fa-sort" style={{ opacity: 0.3 }}></i>}
                           </span>
                         </th>
                         <th onClick={() => handleSort('grade')} style={{ cursor: 'pointer', userSelect: 'none' }}>
