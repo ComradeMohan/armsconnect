@@ -43,9 +43,9 @@ function getMonthIdFromValue(value: string): string | null {
   return `${monthVal}${year}`;
 }
 
-async function getWithRetry(client: any, url: string, options: any = {}, retries = 0): Promise<any> {
+async function getWithRetry(client: any, url: string, options: any = {}, retries = 1): Promise<any> {
   const mergedOptions = {
-    timeout: 6000, // 6 seconds default timeout for Saveetha API requests
+    timeout: 12000, // 12 seconds default timeout for Saveetha API requests
     ...options
   };
 
@@ -74,7 +74,7 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
     monthCourses = cachedMonth.data;
   } else {
     const monthCoursesUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=CoursebyMonth&Mode=PublishCoursebyMonthNew&Monthyear=${monthId}`;
-    const monthCoursesRes = await getWithRetry(client, monthCoursesUrl, {}, 0);
+    const monthCoursesRes = await getWithRetry(client, monthCoursesUrl, {}, 1);
     monthCourses = monthCoursesRes.data?.Table || [];
     staticCache.courseByMonth.set(monthId, { data: monthCourses, fetchedAt: Date.now() });
   }
@@ -108,7 +108,7 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
       const rosterPromises = batch.map(async (subjectId: any) => {
         try {
           const studentListUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=ResultView&Mode=NewResultViewFaculty&Coursename=${subjectId}`;
-          const studentListRes = await getWithRetry(client, studentListUrl, { timeout: 5000 }, 0);
+          const studentListRes = await getWithRetry(client, studentListUrl, { timeout: 12000 }, 0);
           const students = studentListRes.data?.Table || [];
 
           const matchingStudent = students.find((stud: any) => {
@@ -150,7 +150,7 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
 
   // 4. Fetch marks split
   const marksUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=ViewMarks&Mode=MarkSplitbyId&Id=${foundSubjectId}&Id2=${foundViewId}`;
-  const marksRes = await getWithRetry(client, marksUrl, { timeout: 6000 }, 0);
+  const marksRes = await getWithRetry(client, marksUrl, { timeout: 12000 }, 0);
   const marksTable = marksRes.data?.Table || [];
 
   return marksTable.map((m: any) => ({
