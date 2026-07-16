@@ -19,16 +19,39 @@ const ARMS_BASE_URL = (process.env.ARMS_BASE_URL || 'https://arms.sse.saveetha.c
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const staticCache = {
-  monthYears: null as any[] | null,
-  monthYearsFetchedAt: 0,
   courseByMonth: new Map<string, { data: any[]; fetchedAt: number }>(),
   rosterViewIds: new Map<string, { viewId: string; subjectId: string; fetchedAt: number }>()
 };
 
-async function getWithRetry(client: any, url: string, options: any = {}, retries = 2): Promise<any> {
+// Computes the MonthYear system ID deterministically from values like "June-2025".
+// ARMS IDs follow a predictable concatenation: numericMonth + 4-digitYear (e.g. June-2025 -> 6 + 2025 -> "62025").
+function getMonthIdFromValue(value: string): string | null {
+  const parts = value.split('-');
+  if (parts.length !== 2) return null;
+  const monthName = parts[0].trim().toLowerCase();
+  const year = parts[1].trim();
+
+  const monthNames = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+  const shortMonthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+  let monthVal = monthNames.indexOf(monthName) + 1;
+  if (monthVal === 0) {
+    monthVal = shortMonthNames.indexOf(monthName.substring(0, 3)) + 1;
+  }
+
+  if (monthVal === 0) return null;
+  return `${monthVal}${year}`;
+}
+
+async function getWithRetry(client: any, url: string, options: any = {}, retries = 0): Promise<any> {
+  const mergedOptions = {
+    timeout: 6000, // 6 seconds default timeout for Saveetha API requests
+    ...options
+  };
+
   for (let i = 0; i <= retries; i++) {
     try {
-      return await client.get(url, options);
+      return await client.get(url, mergedOptions);
     } catch (err: any) {
       if (i === retries) throw err;
       const delay = 1000 * (i + 1);
@@ -38,26 +61,10 @@ async function getWithRetry(client: any, url: string, options: any = {}, retries
 }
 
 async function resolveCourse(client: any, username: string, courseCode: string, monthYear: string): Promise<any> {
-  // 1. Fetch Month/Year registry (cached)
-  let monthYears = staticCache.monthYears;
-  if (!monthYears || (Date.now() - staticCache.monthYearsFetchedAt) > CACHE_TTL_MS) {
-    const monthYearUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=MonthYear&Mode=MonthYearNew`;
-    const monthYearRes = await getWithRetry(client, monthYearUrl);
-    monthYears = monthYearRes.data?.Table || [];
-    staticCache.monthYears = monthYears;
-    staticCache.monthYearsFetchedAt = Date.now();
-  }
-
-  const monthMap = new Map<string, string>();
-  for (const item of (monthYears || [])) {
-    if (item.Value && item.Id) {
-      monthMap.set(String(item.Value).trim(), String(item.Id).trim());
-    }
-  }
-
-  const monthId = monthMap.get(monthYear);
+  // Deterministically compute the MonthYear ID directly from value - avoids 1 external HTTP request
+  const monthId = getMonthIdFromValue(monthYear);
   if (!monthId) {
-    throw new Error(`Month mapping not found for ${monthYear}`);
+    throw new Error(`Invalid monthYear format: ${monthYear}`);
   }
 
   // 2. Fetch courses published for this month (cached)
@@ -67,7 +74,7 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
     monthCourses = cachedMonth.data;
   } else {
     const monthCoursesUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=CoursebyMonth&Mode=PublishCoursebyMonthNew&Monthyear=${monthId}`;
-    const monthCoursesRes = await getWithRetry(client, monthCoursesUrl);
+    const monthCoursesRes = await getWithRetry(client, monthCoursesUrl, {}, 0);
     monthCourses = monthCoursesRes.data?.Table || [];
     staticCache.courseByMonth.set(monthId, { data: monthCourses, fetchedAt: Date.now() });
   }
@@ -93,30 +100,46 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
     foundSubjectId = cachedView.subjectId;
   } else {
     const userClean = username.toLowerCase();
+    const sectionBatchSize = 5; // Query 5 rosters in parallel at a time to prevent socket exhaustion
 
-    for (const subjectId of subjectIds) {
-      try {
-        const studentListUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=ResultView&Mode=NewResultViewFaculty&Coursename=${subjectId}`;
-        const studentListRes = await getWithRetry(client, studentListUrl, { timeout: 20000 });
-        const students = studentListRes.data?.Table || [];
+    for (let i = 0; i < subjectIds.length; i += sectionBatchSize) {
+      const batch = subjectIds.slice(i, i + sectionBatchSize);
+      
+      const rosterPromises = batch.map(async (subjectId: any) => {
+        try {
+          const studentListUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=ResultView&Mode=NewResultViewFaculty&Coursename=${subjectId}`;
+          const studentListRes = await getWithRetry(client, studentListUrl, { timeout: 5000 }, 0);
+          const students = studentListRes.data?.Table || [];
 
-        const matchingStudent = students.find((stud: any) => {
-          const regClean = String(stud.RegNo || '').trim().toLowerCase();
-          return regClean === userClean || regClean.startsWith(userClean) || userClean.startsWith(regClean);
-        });
-
-        if (matchingStudent && matchingStudent.ViewId) {
-          foundViewId = String(matchingStudent.ViewId).trim();
-          foundSubjectId = subjectId;
-          staticCache.rosterViewIds.set(cacheKey, {
-            viewId: foundViewId,
-            subjectId: foundSubjectId,
-            fetchedAt: Date.now()
+          const matchingStudent = students.find((stud: any) => {
+            const regClean = String(stud.RegNo || '').trim().toLowerCase();
+            return regClean === userClean || regClean.startsWith(userClean) || userClean.startsWith(regClean);
           });
-          break;
+
+          if (matchingStudent && matchingStudent.ViewId) {
+            return {
+              viewId: String(matchingStudent.ViewId).trim(),
+              subjectId
+            };
+          }
+        } catch (err: any) {
+          // Quietly ignore section errors during search
         }
-      } catch (err) {
-        console.warn(`[MarksAPI] Error checking subject ${subjectId}:`, err);
+        return null;
+      });
+
+      const results = await Promise.all(rosterPromises);
+      const successfulResult = results.find(r => r !== null);
+
+      if (successfulResult) {
+        foundViewId = successfulResult.viewId;
+        foundSubjectId = successfulResult.subjectId;
+        staticCache.rosterViewIds.set(cacheKey, {
+          viewId: foundViewId,
+          subjectId: foundSubjectId,
+          fetchedAt: Date.now()
+        });
+        break; // Found the student! Stop searching subsequent batches.
       }
     }
   }
@@ -127,7 +150,7 @@ async function resolveCourse(client: any, username: string, courseCode: string, 
 
   // 4. Fetch marks split
   const marksUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=ViewMarks&Mode=MarkSplitbyId&Id=${foundSubjectId}&Id2=${foundViewId}`;
-  const marksRes = await getWithRetry(client, marksUrl, { timeout: 20000 });
+  const marksRes = await getWithRetry(client, marksUrl, { timeout: 6000 }, 0);
   const marksTable = marksRes.data?.Table || [];
 
   return marksTable.map((m: any) => ({
@@ -167,6 +190,29 @@ export async function POST(request: Request) {
 
     // Check if bulk request
     if (body.courses && Array.isArray(body.courses)) {
+      // 1. Extract all unique sessions (monthIds) needed for the requested courses using local logic
+      const uniqueMonthIds = new Set<string>();
+      for (const c of body.courses) {
+        const monthId = getMonthIdFromValue(c.monthYear);
+        if (monthId) uniqueMonthIds.add(monthId);
+      }
+
+      // 3. Pre-fetch all course registries for these unique sessions in parallel
+      const monthIdArray = Array.from(uniqueMonthIds);
+      await Promise.all(monthIdArray.map(async (monthId) => {
+        const cached = staticCache.courseByMonth.get(monthId);
+        if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL_MS) return;
+
+        try {
+          const monthCoursesUrl = `${ARMS_BASE_URL}/Handler/Controller.ashx?Page=CoursebyMonth&Mode=PublishCoursebyMonthNew&Monthyear=${monthId}`;
+          const monthCoursesRes = await getWithRetry(client, monthCoursesUrl);
+          const data = monthCoursesRes.data?.Table || [];
+          staticCache.courseByMonth.set(monthId, { data, fetchedAt: Date.now() });
+        } catch (err: any) {
+          console.warn(`[MarksAPI] Pre-fetch CoursebyMonth failed for ${monthId}:`, err.message);
+        }
+      }));
+
       const encoder = new TextEncoder();
       let isClosed = false;
 
@@ -183,13 +229,20 @@ export async function POST(request: Request) {
             if (isClosed) break;
             
             const promises = batch.map(async (c: any) => {
+              const startTime = performance.now();
+              console.log(`[MarksAPI] [START] Fetching marks for ${c.courseCode} (${c.monthYear})`);
               try {
                 const marks = await resolveCourse(client, username, c.courseCode, c.monthYear);
+                const duration = Math.round(performance.now() - startTime);
+                console.log(`[MarksAPI] [SUCCESS] ${c.courseCode} resolved in ${duration}ms (${marks?.length || 0} rubrics)`);
+                
                 if (isClosed) return;
                 const data = JSON.stringify({ sno: c.sno, marks, error: null });
                 controller.enqueue(encoder.encode(`data: ${data}\n\n`));
               } catch (err: any) {
-                console.warn(`[MarksAPI] Bulk error for course ${c.courseCode}:`, err.message);
+                const duration = Math.round(performance.now() - startTime);
+                console.error(`[MarksAPI] [FAIL] ${c.courseCode} failed in ${duration}ms: ${err.message}`);
+                
                 if (isClosed) return;
                 const data = JSON.stringify({ sno: c.sno, marks: null, error: err.message || 'Failed' });
                 try {
