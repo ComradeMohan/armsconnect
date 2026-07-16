@@ -215,7 +215,8 @@ export default function ProfilePage() {
 
     const timer = setTimeout(() => {
       const dismissed = sessionStorage.getItem("pwa_install_dismissed");
-      if (!dismissed) {
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone || document.referrer.includes('android-app://');
+      if (!dismissed && !isStandalone) {
         setShowInstallBanner(true);
       }
     }, 10000); // 10 seconds
