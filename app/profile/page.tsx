@@ -385,6 +385,8 @@ export default function ProfilePage() {
               clean[key] = { ...parsed[key], loading: false };
             }
             setCourseMarks(clean);
+          } else {
+            setCourseMarks({}); // Clear old marks if no cache exists for this new user!
           }
         } catch (e) {
           console.warn("Failed to load cached course marks:", e);
@@ -939,17 +941,11 @@ export default function ProfilePage() {
   };
 
   const handleLogout = () => {
-    const regno = profile?.regno;
     sessionStorage.removeItem("profile");
     localStorage.removeItem("profile");
     localStorage.removeItem("saved_username");
     localStorage.removeItem("saved_password");
-    // Remove user-scoped marks for this account
-    if (regno) {
-      localStorage.removeItem(`saveetha_course_marks_${regno}`);
-    }
-    // Also clean up any legacy unscoped key left from older versions
-    localStorage.removeItem("saveetha_course_marks");
+    // We keep the student's permanent marks cache in localStorage so they don't have to re-fetch on next login.
     router.push("/");
   };
 
